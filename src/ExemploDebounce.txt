@@ -1,0 +1,40 @@
+#include<Arduino.h>
+
+#define LED1 8
+#define BT1 9
+#define DebounceTime 450
+
+bool LED1STATUS = 0;
+bool BT1STATUS = 0;
+
+void LeBotoes();
+
+void setup() {
+  pinMode(LED1, OUTPUT);
+  pinMode(BT1, INPUT);
+}
+
+void loop() {
+  LeBotoes();
+  digitalWrite(LED1, BT1STATUS);
+}
+
+void LeBotoes() {
+  static bool BT1_FLAG = 0;
+  static long long BT1_DEBOUNCE = 0;
+
+  if (!digitalRead(BT1) && !BT1_FLAG) {
+    BT1_FLAG = 1;
+    BT1_DEBOUNCE = millis();
+  }
+
+  if (!digitalRead(BT1) && BT1_FLAG && ( BT1_DEBOUNCE + DebounceTime < millis() )){
+    BT1_DEBOUNCE = millis();
+    BT1STATUS = 1;
+  }
+
+  if (digitalRead(BT1) && BT1_FLAG && ( BT1_DEBOUNCE + DebounceTime < millis() )){
+    BT1_FLAG = 0;
+    BT1STATUS = 0;
+  }  
+}

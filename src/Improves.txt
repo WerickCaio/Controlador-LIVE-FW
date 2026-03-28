@@ -1,0 +1,161 @@
+// ============================================
+// --- Especificações de Projeto ---
+// Projeto: ContadorLive
+// Descrição: Controle remoto para gerenciar placar, com funções de adição e reinicialização.
+// Projetista: Werick Caio
+// Data: 07/02/24
+// ============================================
+
+// --- Inclusão de Bibliotecas ---
+#include <LedControl.h> 
+#include <util/delay.h>
+#include "PinDefinitionsAndMore.h"
+#define DECODE_RC6
+#include <IRremote.hpp>
+
+// --- Definição de Variáveis ---
+unsigned long tempodecorrido = 0;
+unsigned long debounceTime = 75;
+
+// Máquina de Estados Principal
+enum StateMachine {
+  START, CONFIG, IDLE, INIT_COUNTER, PRESET_COUNTER_CONFIGURED,
+  FINISH, GRAVANDO_PLACAR, ZERANDO_MEMORIA
+};
+
+// Máquina de Estados para Painéis
+enum PanelState {
+  PLOT_BOX_PLAYER1, PLOT_BOX_PLAYER2, PLOT_BOX_PLAYER3, PLOT_BOX_PLAYER4
+};
+
+// Cores Disponíveis
+enum Colors {
+  RED, BLUE, GREEN, YELLOW, CYAN, PURPLE, WHITE
+};
+
+// Definição da Função de Reset
+void (*funcReset)() = 0;
+
+// --- Configuração Inicial ---
+void setup() {
+  IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK);
+  ledDisplayBegin();
+  
+  // Configuração de PWM
+  pinMode(5, OUTPUT);
+}
+
+// --- Loop Principal ---
+void loop() {
+  static uint8_t panelPlayerState = START; // Estado inicial
+  static uint8_t panelConfiguration = PLOT_BOX_PLAYER1; // Estado inicial da configuração
+  static bool actualState[4] = {1, 0, 0, 0}; // Estado inicial das cores
+
+  // Máquina de Estados Principal
+  switch (panelPlayerState) {
+    case START:
+      handleStart(panelPlayerState, tempodecorrido);
+      break;
+
+    case CONFIG:
+      handleConfig(panelConfiguration, actualState);
+      break;
+
+    case IDLE:
+      handleIdle(panelPlayerState);
+      break;
+
+    case INIT_COUNTER:
+      configScore();
+      panelPlayerState = IDLE;
+      break;
+
+    case PRESET_COUNTER_CONFIGURED:
+      SetTheBoxes();
+      configScore();
+      readPlacarEEPROM();
+      panelPlayerState = IDLE;
+      break;
+
+    case FINISH:
+      handleFinish(funcReset);
+      break;
+
+    case GRAVANDO_PLACAR:
+      savePlacarEEPROM();
+      panelPlayerState = IDLE;
+      break;
+
+    case ZERANDO_MEMORIA:
+      clearPlacarEEPROM();
+      panelPlayerState = IDLE;
+      break;
+
+    default:
+      Serial.println("Estado desconhecido!");
+      break;
+  }
+
+  // Funções independentes da máquina de estados
+  updatePanel();
+  for (int i = 0; i < 4; i++) alteraPontosTeam(i);
+}
+
+// --- Funções Auxiliares ---
+
+void handleStart(uint8_t &panelPlayerState, unsigned long &tempodecorrido) {
+  uint8_t buttonPressed = checkControl();
+
+  if (buttonPressed == 0x5C) {
+    clearPanelByPixel();
+    panelPlayerState = CONFIG;
+    tempodecorrido = millis();
+  } else if (buttonPressed == 0x10) {
+    maxPwmOutput();
+  } else {
+    plotMinistryByColor(buttonPressed);
+  }
+}
+
+void plotMinistryByColor(uint8_t buttonPressed) {
+  switch (buttonPressed) {
+    case 0x6D: plotMinistry(RED); break;
+    case 0x6E: plotMinistry(GREEN); break;
+    case 0x6F: plotMinistry(YELLOW); break;
+    case 0x70: plotMinistry(BLUE); break;
+  }
+}
+
+void handleConfig(uint8_t &panelConfiguration, bool actualState[4]) {
+  int buttonPressed = checkControl();
+  if (buttonPressed == 0x10) maxPwmOutput();
+
+  switch (panelConfiguration) {
+    case PLOT_BOX_PLAYER1:
+      manageBox(0, panelConfiguration, actualState);
+      break;
+
+    case PLOT_BOX_PLAYER2:
+      manageBox(1, panelConfiguration, actualState);
+      break;
+
+    case PLOT_BOX_PLAYER3:
+      manageBox(2, panelConfiguration, actualState);
+      break;
+
+    case PLOT_BOX_PLAYER4:
+      manageBox(3, panelConfiguration, actualState);
+      break;
+  }
+}
+
+void manageBox(uint8_t boxIndex, uint8_t &panelConfiguration, bool actualState[4]) {
+  if (millis() - tempodecorrido >= 500) {
+    callBox(boxIndex, actualState[RED], actualState[GREEN], actualState[BLUE], actualState[YELLOW]);
+    tempodecorrido = millis();
+  }
+
+  int buttonPressed = checkControl();
+  if (buttonPressed == 0x5
+
+  // O chat gpt não concluiu a tarefa de continuar, deve ter bugado
