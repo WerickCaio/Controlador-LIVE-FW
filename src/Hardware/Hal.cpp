@@ -82,5 +82,40 @@ void HAL_SetLinesImpar() {
 void HAL_DisableLines() {
     digitalWrite(PIN_A, HIGH);
     digitalWrite(PIN_B, HIGH);
-    digitalWrite(PIN_OE, HIGH); // Desliga a luz
+    digitalWrite(PIN_OE, HIGH); // Apaga a luz
+}
+
+// === ADICIONE ESTAS DUAS FUNÇÕES NO FINAL DO Hal.cpp ===
+
+void HAL_EnableDisplay() {
+    digitalWrite(PIN_OE, LOW); // Acende a luz (Lógica invertida do painel)
+}
+
+void HAL_ExecuteDebug(String cmd) {
+    cmd.trim();
+    cmd.toUpperCase();
+    
+    // Reprodução fiel da sua função ComandosSerial original
+    if (cmd.startsWith("A ")) digitalWrite(PIN_A, cmd.endsWith("ON") ? HIGH : LOW);
+    else if (cmd.startsWith("B ")) digitalWrite(PIN_B, cmd.endsWith("ON") ? HIGH : LOW);
+    else if (cmd.startsWith("CLK")) digitalWrite(PIN_CLK, cmd.endsWith("ON") ? HIGH : LOW);
+    else if (cmd.startsWith("MOSI") || cmd.startsWith("DS")) digitalWrite(PIN_DATA, cmd.endsWith("ON") ? HIGH : LOW);
+    else if (cmd.startsWith("OE")) digitalWrite(PIN_OE, cmd.endsWith("ON") ? HIGH : LOW);
+    else if (cmd.startsWith("LAT")) digitalWrite(PIN_LAT, cmd.endsWith("ON") ? HIGH : LOW);
+    else if (cmd.startsWith("PLOTLINHA")) {
+        SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+        SPI.transfer16(0xFFFF);
+        SPI.endTransaction();
+        HAL_LatchPanel();
+    }
+    else if (cmd.startsWith("ZERODATA")) {
+        SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+        for (int i = 0; i < 192; i++) SPI.transfer16(0x0000);
+        SPI.endTransaction();
+        HAL_LatchPanel();
+    }
+    
+    if (cmd.length() > 0) {
+        Serial.println(">>> Comando de Hardware executado: " + cmd);
+    }
 }

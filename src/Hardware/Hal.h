@@ -3,18 +3,14 @@
 #include <SPI.h>
 #include <EEPROM.h>
 
-// ======================================================================
-// HAL: HARDWARE ABSTRACTION LAYER
-// Nenhuma lógica de jogo deve entrar aqui. Apenas controle físico de chips.
-// ======================================================================
+void HAL_Init();
+int  HAL_PingHardware();
 
-void HAL_Init();                     // Inicia os pinos, EEPROM e SPI
-int  HAL_PingHardware();             // Faz o teste do Sonar e retorna os bits
-
-// Funções de varredura do Painel
 void HAL_SpiTransferNormal(uint16_t data);
 void HAL_SpiTransferInverted(uint16_t data);
 void HAL_LatchPanel();
 void HAL_SetLinesPar();
 void HAL_SetLinesImpar();
 void HAL_DisableLines();
+void HAL_EnableDisplay();            // NOVA: Acende o painel
+void HAL_ExecuteDebug(String cmd);   // NOVA: Restaura os comandos manuais

@@ -140,6 +140,7 @@ void Display_Update() {
     }
     HAL_LatchPanel();
     HAL_SetLinesPar();
+    HAL_EnableDisplay();
     delay(1); 
 
     HAL_DisableLines();
@@ -164,5 +165,6 @@ void Display_Update() {
     }
     HAL_LatchPanel();
     HAL_SetLinesImpar();
+    HAL_EnableDisplay();
     delay(1); 
 }
