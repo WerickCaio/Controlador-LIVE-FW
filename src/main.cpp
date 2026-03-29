@@ -164,17 +164,19 @@ int checkBluetoothCommands()
   if (Serial.available() > 0)
   {
     entrada = Serial.readStringUntil('\n'); // Lê tudo até o Enter
-    entrada.trim(); // Arranca os invisíveis do CRLF e espaços
+    entrada.trim();                         // Arranca os invisíveis do CRLF e espaços
 
-    if (entrada.length() == 0) return -1; // Se foi só um Enter vazio, ignora
+    if (entrada.length() == 0)
+      return -1; // Se foi só um Enter vazio, ignora
 
     int comando = entrada.toInt();
-    
+
     // Se o comando deu 0, mas o usuário NÃO digitou "0" (ex: digitou letras ou sujeira)
-    if (comando == 0 && entrada != "0") {
-        Serial.print("[AVISO] Comando Desconhecido (USB): ");
-        Serial.println(entrada);
-        return -1;
+    if (comando == 0 && entrada != "0")
+    {
+      Serial.print("[AVISO] Comando Desconhecido (USB): ");
+      Serial.println(entrada);
+      return -1;
     }
 
     Serial.print(">>> Comando via USB Executado: ");
@@ -188,14 +190,16 @@ int checkBluetoothCommands()
     entrada = Serial1.readStringUntil('\n');
     entrada.trim();
 
-    if (entrada.length() == 0) return -1;
+    if (entrada.length() == 0)
+      return -1;
 
     int comando = entrada.toInt();
-    
-    if (comando == 0 && entrada != "0") {
-        Serial.print("[AVISO] Comando Desconhecido (BT): ");
-        Serial.println(entrada);
-        return -1;
+
+    if (comando == 0 && entrada != "0")
+    {
+      Serial.print("[AVISO] Comando Desconhecido (BT): ");
+      Serial.println(entrada);
+      return -1;
     }
 
     Serial.print(">>> Comando via Bluetooth Executado: ");
@@ -205,7 +209,6 @@ int checkBluetoothCommands()
 
   return -1; // Nenhum comando recebido
 }
-
 
 void plotNomeDasEquipes()
 {
@@ -264,94 +267,68 @@ void plotCaixaPontuacao()
 
 // bool detectLongPress(uint16_t aLongPressDurationMillis);
 // =============================
-// --- Função de configuração ---
 void setup()
 {
-  ledDisplayBegin();  // Configura SPI, Serial e Configurações de porta para o Uso do LED
-  Serial.begin(9600); // Comunicação Serial com o PC
-  // bluetooth.begin(9600); // Comunicação Serial com o módulo Bluetooth
+  // 1. Velocidade corrigida para igualar ao VS Code (115200)
+  Serial.begin(115200);
+  delay(1000); // Dá tempo para o monitor serial abrir e conectar
+
+  ledDisplayBegin();
+
+  // A comunicação com o HC-05 continua em 9600, isso está corretíssimo!
   Serial1.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
 
-  // Tira o "delay" natural de 1 segundo da porta serial e baixa para 20 milissegundos
   Serial.setTimeout(20);
   Serial1.setTimeout(20);
 
-  Serial.println("Bluetooth ready");
-  // desativaTudo(); // Sobre isso, tenho que Checar as conexões de OE, pois o painel não desligava quando esse pino estava sendo colocado em nível lógico alto
+  descobrirTamanhoDoPainel();
 
-  // --- Substituições para a configuração no controle ---
-  // Essas funções devem ser comentadas pois são configurações de uma pré-seleção de cores, ainda serão usadas em um botão específico do controle
-  // testbox();
-  // configScore();
+  // 2. Traz a tela à vida! Pinta a borda branca inicial
+  clearPanelByPixel();
+  initializerPanel(white);
 
-  // ==========================================
-  // --- Função de controle de luminosidade ---
-  // Fazer a configuração de pwm nos pinos do arduiíno, colocar essa função em um dos botões do controle também
-  // pinMode(6, OUTPUT);
-  // pinMode(13, OUTPUT);
-  // pinMode(11, OUTPUT);
-  // pinMode(7, OUTPUT);
-  // digitalWrite(6, LOW);
-  // pinMode(5, OUTPUT);
-  // pinMode(5, OUTPUT);
-  // analogWrite(6, 254); // Tempo*rário para trabahar e não mexer com os olhos do mestre ivo
-  // while (1)
-  // {
+  Serial.println("\n=== Sistema Iniciado com Sucesso ===");
+  Serial.println("Envie o comando '0' para ir para o modo Jogo!");
 
-  // updatePanel();
-  /* code */
-  // }
-  // maxPwmOutput();
-  // ativaLinhaImpar();
-  // plotMinistry(0);
-  // readPlacarEEPROM();
-  // fillPanel();
-  // cleanShiftRegisters();
-  // if(true);
-  Serial.println("Comunicacao serial inicializada");
-  pinMode(11, HIGH);
+  // Sintaxe corrigida (HIGH é estado, OUTPUT é modo)
+  pinMode(11, OUTPUT);
   digitalWrite(11, HIGH);
 }
 
 // ============================
 // --- Função de repetição ---
+
+// ============================
+// --- Função de repetição ---
 void loop()
 {
-  // static uint8_t panelPlayerState = start; // Variável de inicialização da máquina de estado
   static uint8_t panelPlayerState = start;
+  static uint8_t lastState = 255; // Variável para rastrear mudanças de estado
+
+  // --- TELEMETRIA: Avisa no Monitor Serial sempre que o estado mudar ---
+  if (panelPlayerState != lastState)
+  {
+    Serial.print("\n[MÁQUINA DE ESTADOS] Mudou para o estado: ");
+    Serial.println(panelPlayerState);
+    lastState = panelPlayerState;
+  }
+
   // =============================================
   // --- Início da máquina de estado principal ---
-  switch (panelPlayerState) // Máquina de estado principal
+  switch (panelPlayerState)
   {
 
   case testeBluetooth:
   {
-    // Se houver dados disponíveis no Bluetooth, leia e envie para a Serial
-    // if ((bluetooth.available()-2)>0)
-    // {
-    //   static char command;
-    //   command = bluetooth.read(); // Lê o comando enviado pelo celular
-
-    //   Serial.print("Received: ");
-    //   Serial.println(command);
-    // }
     if (Serial1.available())
     {
-      char command = Serial1.read(); // Lê o comando
-
+      char command = Serial1.read();
       if (command != '\r' && command != '\n')
       {
         DEBUG_PRINT("Received: ");
         DEBUG_PRINTLN(command);
-        // Serial.print("Received: ");
-        // Serial.println(command);
-
-        // Serial.print("Received: ");
-        // Serial.println(command); // Mostra no Serial Monitor
       }
     }
-
-    // Se houver dados disponíveis na Serial, leia e envie para o Bluetooth
     if (Serial.available())
     {
       char c = Serial.read();
@@ -363,10 +340,7 @@ void loop()
 
   case debug:
   {
-    // melquisedeque();
-
     DEBUG_PRINTLN("To debugando");
-    // Serial.println("To debugando");
     digitalWrite(11, HIGH);
     digitalWrite(13, HIGH);
     delay(1);
@@ -383,8 +357,11 @@ void loop()
   {
     if (checkBluetoothCommands() == Ir_Para_Idle)
     {
-
+      Serial.println("[START] Recebeu comando 0! Indo para IDLE...");
       panelPlayerState = idle;
+      
+      // FORÇA a tela a atualizar IMEDIATAMENTE ao entrar no modo de jogo
+      ultimaAtualizacao = millis() - intervaloDeExibicao; 
     }
   }
   break;
@@ -392,13 +369,15 @@ void loop()
   case idle:
   { // Estado de aguardo de mudança do estado
     static int comandoRecebido = -1;
-    // bluetooth.print("estou em idle");
     unsigned long currentMillis = millis(); // Captura o tempo atual
-    // Muda para o próximo estado
 
+    // --- ATUALIZAÇÃO DO PAINEL A CADA 3 SEGUNDOS ---
     if (currentMillis - ultimaAtualizacao >= intervaloDeExibicao)
     {
       ultimaAtualizacao = currentMillis; // Salva o tempo atual
+      Serial.print("[IDLE] Atualizando tela! Mostrando equipes: ");
+      Serial.println(currentState == STATE_1 ? "0 e 1 (BUS/LAN)" : "2 e 3 (WOO/RAI)");
+
       switch (currentState)
       {
       case STATE_1: // Mostra pontuação equipe 0 e 1
@@ -423,163 +402,110 @@ void loop()
     switch (comandoRecebido)
     {
     case Ir_Para_Idle:
-      // ESP.restart();
+      Serial.println("[IDLE] Comando 0 recebido. Reiniciando ESP...");
       ESP.restart();
       panelPlayerState = start;
-
       break;
     case Adicionar_Time_1_50:
-      adicionaPontosEquipes(comandoRecebido - 1);
-      break;
     case Adicionar_Time_1_100:
-      adicionaPontosEquipes(comandoRecebido - 1);
-      break;
     case Adicionar_Time_1_150:
+      Serial.println("[IDLE] Somando pontos ao Time 1");
       adicionaPontosEquipes(comandoRecebido - 1);
+      ultimaAtualizacao = millis() - intervaloDeExibicao; // Atualiza tela na hora
       break;
 
     case Adicionar_Time_2_50:
-      adicionaPontosEquipes(comandoRecebido - 1);
-      break;
     case Adicionar_Time_2_100:
-      adicionaPontosEquipes(comandoRecebido - 1);
-      break;
     case Adicionar_Time_2_150:
+      Serial.println("[IDLE] Somando pontos ao Time 2");
       adicionaPontosEquipes(comandoRecebido - 1);
+      ultimaAtualizacao = millis() - intervaloDeExibicao;
       break;
 
     case Adicionar_Time_3_50:
-      adicionaPontosEquipes(comandoRecebido - 1);
-      break;
     case Adicionar_Time_3_100:
-      adicionaPontosEquipes(comandoRecebido - 1);
-      break;
     case Adicionar_Time_3_150:
+      Serial.println("[IDLE] Somando pontos ao Time 3");
       adicionaPontosEquipes(comandoRecebido - 1);
+      ultimaAtualizacao = millis() - intervaloDeExibicao;
       break;
 
     case Adicionar_Time_4_50:
-      adicionaPontosEquipes(comandoRecebido - 1);
-      break;
     case Adicionar_Time_4_100:
-      adicionaPontosEquipes(comandoRecebido - 1);
-      break;
     case Adicionar_Time_4_150:
+      Serial.println("[IDLE] Somando pontos ao Time 4");
       adicionaPontosEquipes(comandoRecebido - 1);
+      ultimaAtualizacao = millis() - intervaloDeExibicao;
       break;
 
     case Subtrair_Time_1_50:
-      subtraiPontosEquipes(comandoRecebido - 13);
-      break;
     case Subtrair_Time_1_100:
-      subtraiPontosEquipes(comandoRecebido - 13);
-      break;
     case Subtrair_Time_1_150:
+      Serial.println("[IDLE] Subtraindo pontos do Time 1");
       subtraiPontosEquipes(comandoRecebido - 13);
+      ultimaAtualizacao = millis() - intervaloDeExibicao;
       break;
 
     case Subtrair_Time_2_50:
-      subtraiPontosEquipes(comandoRecebido - 13);
-      break;
     case Subtrair_Time_2_100:
-      subtraiPontosEquipes(comandoRecebido - 13);
-      break;
     case Subtrair_Time_2_150:
+      Serial.println("[IDLE] Subtraindo pontos do Time 2");
       subtraiPontosEquipes(comandoRecebido - 13);
+      ultimaAtualizacao = millis() - intervaloDeExibicao;
       break;
 
     case Subtrair_Time_3_50:
-      subtraiPontosEquipes(comandoRecebido - 13);
-      break;
     case Subtrair_Time_3_100:
-      subtraiPontosEquipes(comandoRecebido - 13);
-      break;
     case Subtrair_Time_3_150:
+      Serial.println("[IDLE] Subtraindo pontos do Time 3");
       subtraiPontosEquipes(comandoRecebido - 13);
+      ultimaAtualizacao = millis() - intervaloDeExibicao;
       break;
 
     case Subtrair_Time_4_50:
-      subtraiPontosEquipes(comandoRecebido - 13);
-      break;
     case Subtrair_Time_4_100:
-      subtraiPontosEquipes(comandoRecebido - 13);
-      break;
     case Subtrair_Time_4_150:
+      Serial.println("[IDLE] Subtraindo pontos do Time 4");
       subtraiPontosEquipes(comandoRecebido - 13);
+      ultimaAtualizacao = millis() - intervaloDeExibicao;
       break;
 
     case ZERA_O_PLACAR:
+      Serial.println("[IDLE] Zerando o Placar!");
       clearPlacarEEPROM();
       readPlacarEEPROM();
+      ultimaAtualizacao = millis() - intervaloDeExibicao;
       break;
 
     case GUARDA_O_PLACAR:
+      Serial.println("[IDLE] Salvando Placar na Memória!");
       savePlacarEEPROM();
       readPlacarEEPROM();
       break;
     }
 
-    // if (currentMillis - ultimaAtualizacao >= intervaloDeExibicao)
-    // {
-    //   clearPanelByPixel();
-    //   plotMinistry(0);
-    //   ultimaAtualizacao = currentMillis; // Salva o tempo atual
-    // }
-
+    // Mantido o seu código original de teste de botões
     int buttonPressed = 1452;
+    if (buttonPressed == 0x0C) toggleOutputEnable();
+    if (buttonPressed == 0x10) maxPwmOutput();
+    if (buttonPressed == 0x0D) changeFlagCounter(); 
+    if (buttonPressed == 0x01) changeFlagState(0, 1); 
+    if (buttonPressed == 0x02) changeFlagState(0, 2); 
+    if (buttonPressed == 0x03) changeFlagState(0, 3); 
+    if (buttonPressed == 0x04) changeFlagState(1, 1); 
+    if (buttonPressed == 0x05) changeFlagState(1, 2); 
+    if (buttonPressed == 0x06) changeFlagState(1, 3); 
+    if (buttonPressed == 0x07) changeFlagState(2, 1); 
+    if (buttonPressed == 0x08) changeFlagState(2, 2); 
+    if (buttonPressed == 0x09) changeFlagState(2, 3); 
+    if (buttonPressed == 0x46) changeFlagState(3, 1); 
+    if (buttonPressed == 0xD9) changeFlagState(3, 3); 
 
-    if (buttonPressed == 0x0C)
-      toggleOutputEnable();
-
-    if (buttonPressed == 0x10)
-      maxPwmOutput();
-
-    // Soma de pontos referentes ao time 1
-    if (buttonPressed == 0x0D)
-      changeFlagCounter(); // Muda a flag informando que no painel 0, os pontos irão aumentar até o valor estipulado
-
-    if (buttonPressed == 0x01)
-      changeFlagState(0, 1); // Muda a flag informando que no painel 0, os pontos irão aumentar até o valor estipulado
-    if (buttonPressed == 0x02)
-      changeFlagState(0, 2); // Muda a flag informando que no painel 0, os pontos irão aumentar até o valor estipulado
-    if (buttonPressed == 0x03)
-      changeFlagState(0, 3); // Muda a flag informando que no painel 0, os pontos irão aumentar até o valor estipulado
-
-    // Soma de pontos referentes ao time 2
-    if (buttonPressed == 0x04)
-      changeFlagState(1, 1); // Muda a flag informando que no painel 1, os pontos irão aumentar até o valor estipulado
-    if (buttonPressed == 0x05)
-      changeFlagState(1, 2); // Muda a flag informando que no painel 1, os pontos irão aumentar até o valor estipulado
-    if (buttonPressed == 0x06)
-      changeFlagState(1, 3); // Muda a flag informando que no painel 1, os pontos irão aumentar até o valor estipulado
-
-    // Soma de pontos referentes ao time 3
-    if (buttonPressed == 0x07)
-      changeFlagState(2, 1); // Muda a flag informando que no painel 2, os pontos irão aumentar até o valor estipulado
-    if (buttonPressed == 0x08)
-      changeFlagState(2, 2); // Muda a flag informando que no painel 2, os pontos irão aumentar até o valor estipulado
-    if (buttonPressed == 0x09)
-      changeFlagState(2, 3); // Muda a flag informando que no painel 2, os pontos irão aumentar até o valor estipulado
-
-    // Soma de pontos referentes ao time 4
-    if (buttonPressed == 0x46)
-      changeFlagState(3, 1); // Muda a flag informando que no painel 3, os pontos irão aumentar até o valor estipulado
-    // if(buttonPressed == 0x00) changeFlagState(3, 2); // Muda a flag informando que no painel 3, os pontos irão aumentar até o valor estipulado
-    if (buttonPressed == 0xD9)
-      changeFlagState(3, 3); // Muda a flag informando que no painel 3, os pontos irão aumentar até o valor estipulado
-    // Serial.println("Estou em idle");
-
-    if (buttonPressed == 0x31)
-      panelPlayerState = finish;
-    // Muda a flag informando que no painel 3, os pontos irão aumentar até o valor estipulado
-    if (buttonPressed == 0xBF)
-      panelPlayerState = gravandoPlacar; // Borão Setup
-    if (buttonPressed == 0x38)
-      panelPlayerState = zerandoAMemoria; // Botão sources
-
-    // checaATrocaDePaineis();
+    if (buttonPressed == 0x31) panelPlayerState = finish;
+    if (buttonPressed == 0xBF) panelPlayerState = gravandoPlacar; 
+    if (buttonPressed == 0x38) panelPlayerState = zerandoAMemoria; 
   }
-  break; // Fim da máquina de estado principal
+  break; 
 
   case initCounter:
   {
@@ -601,23 +527,20 @@ void loop()
 
   case finish:
   {
-    static bool OneTime = 1; // Apenas para executar a função da linha seguinte apenas uma única vez
+    static bool OneTime = 1; 
 
     if (OneTime)
     {
       seeWhoWon();
       OneTime = 0;
     }
-    // Serial.println("I'm initcounter");
     int buttonPressed = 1452;
-    if (buttonPressed == 0x2C)
-      ESP.restart(); // Muda a flag informando que no painel 3, os pontos irão aumentar até o valor estipulado
+    if (buttonPressed == 0x2C) ESP.restart(); 
   }
   break;
 
   case gravandoPlacar:
   {
-    // há de ser adicionado as cores para serem adicionadas
     savePlacarEEPROM();
     panelPlayerState = idle;
   }
@@ -625,7 +548,6 @@ void loop()
 
   case zerandoAMemoria:
   {
-    // há de ser adicionado as cores para serem adicionadas
     clearPlacarEEPROM();
     panelPlayerState = idle;
   }
@@ -633,22 +555,13 @@ void loop()
 
   default:
   {
-    // Serial.println("I'm lost!");
-    // panelPlayerState = idle;
+    // Estado de segurança
   }
   break;
   } // Fim da máquina de estado principal
-  // digitalWrite(7, HIGH);
-  // ========================================
-  // --- Funções independentes da máquina ---
-  // Essas são funções que devem ocorrer independente da máquina de estado, portando ficarão fora dela
 
-  // alteraPontosTeam(0); // Função por comparar e indicar qual painel estará sendo adicionado os pontos
-  // alteraPontosTeam(1);
-  // alteraPontosTeam(2);
-  // alteraPontosTeam(3);
-  // alteraPontosTeam(4);
-  // alteraPontosTeam(5);
-  updatePanel(); // Função de atualização do painel
-  // ComandosSerial();
+  // ========================================
+  // Atualiza o painel fisicamente sem parar
+  updatePanel(); 
 }
+

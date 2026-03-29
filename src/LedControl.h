@@ -41,7 +41,7 @@ void drawBoxTeams42x16(int team, const bool ch[], int color); //função teste p
 void colocaNumero(int xi, int yi, int numero, int color); // Função responsável por mostrar os números no placar
 
 
-
+void descobrirTamanhoDoPainel();
 // -- Funções gráficas Alto nível
 void SetTheBoxes(); // Configura no painel os times vermelho, verde azul e amarelo (respectivamente)
 void SetTheBoxesExtra();

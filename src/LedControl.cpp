@@ -17,13 +17,24 @@ constexpr int PIN_B = 3;
 constexpr int PIN_A = 4;
 constexpr int PIN_CLK = 6;
 constexpr int PIN_DATA = 7;
+// Defina o pino onde você ligou o fio de retorno
+constexpr int PIN_RETORNO = 2;
 
 // ==============================
 // --- Definição de variáveis ---
 // Primeiro de tudo, a variável referente aos primeiros 64 bits de informações está sendo declarada a seguir
 // uint64_t ledPanelRgb[2][48]; // referente aos 3072 pontos de luz [ 0 - 1023 = vermelho; 1024 - 2047 = Verde; 2048 - 3071 = Azul;
 // Com a adição do novo painel, a variável terá que ser uma matriz, ficando na forma de:
-uint64_t ledPanelRgb[2][48];
+// uint64_t ledPanelRgb[2][48];
+// --- MEMÓRIA PREPARADA PARA ATÉ 128x32 ---
+// 4 segmentos de 64 bits garantem espaço para um ecrã gigante.
+uint64_t ledPanelRgb[4][48];
+
+// Variáveis dinâmicas de controle
+int segmentosAtivos = 2; // Inicia assumindo 64x32 (2 segmentos de 64x16)
+int larguraAtual = 128;  // Largura virtual inicial
+
+// enum colors { red, blue, green, yellow, cyan, purple, white };
 int teamsScore[6] = {0, 0, 0, 0, 0, 0}; // Variável que guarda o valor dos 6 times == Tenho que ver uma posição na memória da EEPROM PRA GUARDAR ESSES VALORES.
 // Ver também como guardar o último estado do painel antes de ele ser desligado.
 
@@ -127,16 +138,75 @@ void ledDisplayBegin() // Função de configuração inicial
     readPlacarEEPROM();
 }
 
-void clearPanelByPixel() // Zera a variável que é exibida no painel
-{
-    for (size_t j = 0; j < 128; j++)
-    {
-        for (size_t i = 0; i < 16; i++)
-        {
+// ======================================================================
+// O SONAR: AUTO-DESCOBERTA DE HARDWARE (PING)
+// ======================================================================
+void descobrirTamanhoDoPainel() {
+    pinMode(PIN_DATA, OUTPUT);
+    pinMode(PIN_CLK, OUTPUT);
+    pinMode(PIN_OE, OUTPUT);
+    pinMode(PIN_RETORNO, INPUT_PULLDOWN); // Evita ruído eletromagnético
+
+    digitalWrite(PIN_OE, HIGH); // Apaga a tela para o teste ser invisível
+    digitalWrite(PIN_CLK, LOW);
+
+    // 1. Esvazia os Shift Registers de qualquer lixo anterior
+    digitalWrite(PIN_DATA, LOW);
+    for(int i = 0; i < 20000; i++) {
+        digitalWrite(PIN_CLK, HIGH);
+        digitalWrite(PIN_CLK, LOW);
+    }
+
+    // 2. Injeta a "Bolinha" (Um único bit 1 na corrente)
+    digitalWrite(PIN_DATA, HIGH);
+    digitalWrite(PIN_CLK, HIGH);
+    digitalWrite(PIN_CLK, LOW);
+    
+    // 3. Empurra a "Bolinha" com Zeros e começa a contar!
+    digitalWrite(PIN_DATA, LOW);
+    int contador_de_bits = 1;
+    
+    // Ouve o pino de retorno. O limite de 20000 impede travamentos se o fio estiver solto.
+    while(digitalRead(PIN_RETORNO) == LOW && contador_de_bits < 20000) {
+        digitalWrite(PIN_CLK, HIGH);
+        digitalWrite(PIN_CLK, LOW);
+        contador_de_bits++;
+    }
+
+    Serial.print("\n>>> PING DO HARDWARE CONCLUIDO <<<\n");
+    Serial.printf("Bits detectados na corrente: %d\n", contador_de_bits);
+
+    // 4. Adapta o "Motor Gráfico" com base na física descoberta
+    // 64x32 usa ~6144 bits | 128x32 usa ~12288 bits
+    // 4. Adapta o "Motor Gráfico" com base na física descoberta
+    // 64x32 usa 3072 bits | 128x32 usará 6144 bits
+    if (contador_de_bits > 5000) {
+        segmentosAtivos = 4;
+        larguraAtual = 256; // 4 blocos virtuais
+        Serial.println("MODO ATIVADO: 128x32 (Placar Gigante)");
+    } else if (contador_de_bits > 2000) {
+        segmentosAtivos = 2;
+        larguraAtual = 128; // 2 blocos virtuais
+        Serial.println("MODO ATIVADO: 64x32 (Placar Normal)");
+    } else {
+        Serial.println("[AVISO] Fio de retorno solto ou erro no painel. Assumindo 64x32.");
+        segmentosAtivos = 2;
+        larguraAtual = 128;
+    }
+
+    // (Isso mata a tela preta e o erro vermelho de uma vez só)
+    SPI.begin(PIN_CLK, -1, PIN_DATA, -1);
+}
+
+
+void clearPanelByPixel() {
+    for (size_t j = 0; j < larguraAtual; j++) {
+        for (size_t i = 0; i < 16; i++) {
             clearPixelMemory(j, i, white);
         }
     }
 }
+
 
 void fillPanel() // preenche a variável que é exibida no painel
 {
@@ -182,300 +252,151 @@ void desativaTudo()
 }
 // ===========================================
 // --- Funções de funcionamento de projeto ---
-void updatePanel()
-{
-    // Serial.print("Estou no UPDATE");
-    // Essa é a função mais importante, ela varre a variável que guarda as informações de modo que o valor sempre seja atualizado, permitindo a leitura dessa variável
-    // Variável que é varrida se chama ledPanelRgb[2], ela é uma matriz de uint64_t com 48 linhas, referentes ao painel de led mostrado
-    // A disposição de linhas é da seguinte maneira
-    // ledPanelRgb[2][0] a ledPanelRgb[2][15] - Informação referente aos leds vermelhos
-    // ledPanelRgb[2][16] a ledPanelRgb[2][31] - Informação referente aos leds verdes
-    // ledPanelRgb[2][32] a ledPanelRgb[2][47] - Informação referente aos leds Azuis
 
-    // Cada linha possui 64 bits de endereço, cada um referente a um led do painel
-    // Obs. Todo esse código foi personalizado para funcionar em um display 16x64, para alterar, é necessário mexer no código fonte para devidas adaptações
-    // A informação é dividida nos 4 paineis de 16x16, que juntos formam o 16x64
-    //  Display 1   Display 2   Display 3   Display 4
-    //  0 a 15      16 a 31     32 a 47     48 a 63
-    //  PS. Esse arranjo é para cada linha da variável ledPanelRgb[2][];
 
-    // -- Carrega os espaços de memória dos shift registers para as linhas pares serem exibidas --
-    desativaTudo(); // Configura nível lógico alto em A e B, de modo que nenhum led esteja iniciado no display
-    toggleOE();
-    // delay(1000);
-    // ledPanelRgb[painel][linhas] // Essa é a variável que eu tenho que manipular, ela possui 2 linhas de 48 colunas, todas de 64bits
+// ======================================================================
+// MOTOR FÍSICO ESP32 (Dinâmico para 64x32 ou 128x32)
+// ======================================================================
+void updatePanel() {
+    digitalWrite(PIN_A, HIGH); digitalWrite(PIN_B, HIGH); digitalWrite(PIN_OE, HIGH);
 
-    for (int cores = 2; cores >= 0; cores--) // quando for dois, o valor de adição é 2*16 + ValorAtual = azul e assim sucessivamente para as outras duas cores
-    {
-        for (int painel = 0; painel <= 1; painel++)
-        {
-            if (!painel)
-            {
-                for (int displayID = 0; displayID <= 3; displayID++) // Isso é a indicação de 4 displays
-                {
-                    for (int linhas = (0 + cores * 16); linhas <= (15 + cores * 16); linhas += 2) // Vai descarregar as linhas ímpares de cada painel, 8 linhas por vez
-                    // Ou seja, essa função tem que ser executada 4 vezes para varrer uma das cores
-                    {
-                        // para que a informação seja enviada para o painel, está sendo utilizado o periférico de SPI do microcontrolador
-                        // Porem a informação do painel é uma variável de 64 bits, tendo que ser repartida 4 vezes para ser enviada para os paineis
-                        uint16_t slicedInfo = (ledPanelRgb[painel][linhas] >> 16 * displayID); // O right shift serve para saber qual pedado de ledPanelRgb[2][] deve ser enviado naquele momento
-                        SPI.beginTransaction(SPISettings(4000000, LSBFIRST, SPI_MODE0));
-                        
-                        SPI.transfer16(slicedInfo); // Responsável por enviar a informação para os shiftregisters do painel
-                        
-                        SPI.endTransaction();
-                        /* code */
+    // --- LINHAS PARES ---
+    for (int cores = 2; cores >= 0; cores--) {
+        for (int painel = 0; painel < segmentosAtivos; painel++) {
+            
+            // Lógica para detectar se o módulo atual está de cabeça para baixo
+            // Se tiver 4 painéis, os painéis 0 e 1 são a parte de baixo.
+            bool isInverted = false;
+            if (segmentosAtivos == 4 && painel < 2) isInverted = true;
+            if (segmentosAtivos == 2 && painel == 0) isInverted = true;
+
+            if (!isInverted) {
+                SPI.beginTransaction(SPISettings(4000000, LSBFIRST, SPI_MODE0));
+                for (int displayID = 0; displayID <= 3; displayID++) {
+                    for (int linhas = (0 + cores * 16); linhas <= (15 + cores * 16); linhas += 2) {
+                        SPI.write16((ledPanelRgb[painel][linhas] >> (16 * displayID)));
                     }
                 }
-            }
-            else
-            {
-                // for (int qnt = 0; qnt < 32; qnt++)
-                // {
-                // 
-                // SPI.transfer16(0); // Responsável por enviar a informação para os shiftregisters do painel
-                // 
-                for (int displayID = 3; displayID >= 0; displayID--) // Isso é a indicação de 4 displays
-                {
-                    for (int linhas = (15 + cores * 16); linhas >= (cores * 16); linhas -= 2) // Vai descarregar as linhas ímpares de cada painel, 8 linhas por vez
-                    // Ou seja, essa função tem que ser executada 4 vezes para varrer uma das cores
-                    {
-                        // para que a informação seja enviada para o painel, está sendo utilizado o periférico de SPI do microcontrolador
-                        // Porem a informação do painel é uma variável de 64 bits, tendo que ser repartida 4 vezes para ser enviada para os paineis
-                        uint16_t slicedInfo = (ledPanelRgb[painel][linhas] >> 16 * displayID); // O right shift serve para saber qual pedado de ledPanelRgb[2][] deve ser enviado naquele momento
-                        SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
-                        
-                        SPI.transfer16(slicedInfo); // Responsável por enviar a informação para os shiftregisters do painel
-                        
-                        SPI.endTransaction();
-                        /* code */
+                SPI.endTransaction();
+            } else {
+                SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+                for (int displayID = 3; displayID >= 0; displayID--) {
+                    for (int linhas = (15 + cores * 16); linhas >= (cores * 16); linhas -= 2) {
+                        SPI.write16((ledPanelRgb[painel][linhas] >> (16 * displayID)));
                     }
                 }
+                SPI.endTransaction();
             }
         }
     }
-    latchPanel();    // Manda sinal de Latch para os shiftRegisters liberando a saída das informações para as memórias
-    ativaLinhaPar(); // Ativa para que as linhas pares sejam ativas e a informação mostrada
-    toggleOE();
-    delay(1); // Delay necessário para que os nossos olhos percebam a ativação do painel de forma devida
-    // -- Carrega os espaços de memória dos shift registers para as linhas impares serem exibidas --
+    
+    digitalWrite(PIN_LAT, HIGH); digitalWrite(PIN_LAT, LOW);
+    digitalWrite(PIN_A, HIGH); digitalWrite(PIN_B, LOW); digitalWrite(PIN_OE, LOW); 
+    delay(1); 
 
-    desativaTudo();
-    toggleOE();
-    // delay(1000);
-    for (int cores = 2; cores >= 0; cores--) // quando for dois, o valor de adição é 2*16 + ValorAtual = azul e assim sucessivamente para as outras duas cores
-    {
-        for (int painel = 0; painel <= 1; painel++)
-        {
-            if (!painel)
-            {
-                for (int displayID = 0; displayID <= 3; displayID++) // Isso é a indicação de 4 displays
-                {
-                    for (int linhas = (1 + cores * 16); linhas <= (15 + cores * 16); linhas += 2) // Vai descarregar as linhas ímpares de cada painel, 8 linhas por vez
-                    // Ou seja, essa função tem que ser executada 4 vezes para varrer uma das cores
-                    {
-                        // para que a informação seja enviada para o painel, está sendo utilizado o periférico de SPI do microcontrolador
-                        // Porem a informação do painel é uma variável de 64 bits, tendo que ser repartida 4 vezes para ser enviada para os paineis
-                        uint16_t slicedInfo = (ledPanelRgb[painel][linhas] >> 16 * displayID); // O right shift serve para saber qual pedado de ledPanelRgb[2][] deve ser enviado naquele momento
-                        SPI.beginTransaction(SPISettings(4000000, LSBFIRST, SPI_MODE0));
-                        
-                        SPI.transfer16(slicedInfo); // Responsável por enviar a informação para os shiftregisters do painel
-                        
-                        SPI.endTransaction();
-                        /* code */
+    digitalWrite(PIN_A, HIGH); digitalWrite(PIN_B, HIGH); digitalWrite(PIN_OE, HIGH);
+
+    // --- LINHAS ÍMPARES ---
+    for (int cores = 2; cores >= 0; cores--) {
+        for (int painel = 0; painel < segmentosAtivos; painel++) {
+            
+            bool isInverted = false;
+            if (segmentosAtivos == 4 && painel < 2) isInverted = true;
+            if (segmentosAtivos == 2 && painel == 0) isInverted = true;
+
+            if (!isInverted) {
+                SPI.beginTransaction(SPISettings(4000000, LSBFIRST, SPI_MODE0));
+                for (int displayID = 0; displayID <= 3; displayID++) {
+                    for (int linhas = (1 + cores * 16); linhas <= (15 + cores * 16); linhas += 2) {
+                        SPI.write16((ledPanelRgb[painel][linhas] >> (16 * displayID)));
                     }
                 }
-            }
-            else
-            {
-                // for (int qnt = 0; qnt < 32; qnt++)
-                // {
-                // 
-                // SPI.transfer16(0); // Responsável por enviar a informação para os shiftregisters do painel
-                // 
-                for (int displayID = 3; displayID >= 0; displayID--) // Isso é a indicação de 4 displays
-                {
-                    for (int linhas = (14 + cores * 16); linhas >= (cores * 16); linhas -= 2) // Vai descarregar as linhas ímpares de cada painel, 8 linhas por vez
-                    // Ou seja, essa função tem que ser executada 4 vezes para varrer uma das cores
-                    {
-                        // para que a informação seja enviada para o painel, está sendo utilizado o periférico de SPI do microcontrolador
-                        // Porem a informação do painel é uma variável de 64 bits, tendo que ser repartida 4 vezes para ser enviada para os paineis
-                        uint16_t slicedInfo = (ledPanelRgb[painel][linhas] >> 16 * displayID); // O right shift serve para saber qual pedado de ledPanelRgb[2][] deve ser enviado naquele momento
-                        SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
-                        
-                        SPI.transfer16(slicedInfo); // Responsável por enviar a informação para os shiftregisters do painel
-                        
-                        SPI.endTransaction();
-                        /* code */
+                SPI.endTransaction();
+            } else {
+                SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+                for (int displayID = 3; displayID >= 0; displayID--) {
+                    for (int linhas = (14 + cores * 16); linhas >= (cores * 16); linhas -= 2) {
+                        SPI.write16((ledPanelRgb[painel][linhas] >> (16 * displayID)));
                     }
                 }
+                SPI.endTransaction();
             }
         }
     }
-
-    // for (int cores = 2; cores >= 0; cores--) // quando for dois, o valor de adição é 2*16 + ValorAtual = azul e assim sucessivamente para as outras duas cores
-    // {
-    //     for (int painel = 1; painel >= 0; painel--)
-    //     {
-    //         for (int displayID = 3; displayID >= 0; displayID--) // Isso é a indicação de 4 displays
-    //         {
-    //             for (int linhas = (14 + cores * 16); linhas >= (cores * 16); linhas -= 2) // Vai descarregar (0,2,4,6,8,10,12,14) 8 linhas de cada painel
-    //             // Ou seja, essa função tem que ser executada 4 vezes para varrer uma das cores
-    //             {
-    //                 // para que a informação seja enviada para o painel, está sendo utilizado o periférico de SPI do microcontrolador
-    //                 // Porem a informação do painel é uma variável de 64 bits, tendo que ser repartida 4 vezes para ser enviada para os paineis
-    //                 uint16_t slicedInfo = (ledPanelRgb[painel][linhas] >> 16 * displayID); // O right shift serve para saber qual pedado de ledPanelRgb[2][] deve ser enviado naquele momento
-    //                 
-    //                 SPI.transfer16(slicedInfo); // Responsável por enviar a informação para os shiftregisters do painel
-    //                 
-    //                 /* code */
-    //             }
-    //         }
-    //     }
-    // }
-    latchPanel();      // Manda sinal de Latch para os shiftRegisters liberando a saída das informações para as memórias
-    ativaLinhaImpar(); // Ativa para que as linhas impares sejam ativas e a informação mostrada
-    toggleOE();
-    delay(1); // Delay necessário para que os nossos olhos percebam a ativação do painel de forma devida
-
-} //  --- Fim da função ---
-
+    
+    digitalWrite(PIN_LAT, HIGH); digitalWrite(PIN_LAT, LOW);
+    digitalWrite(PIN_A, LOW); digitalWrite(PIN_B, HIGH); digitalWrite(PIN_OE, LOW); 
+    delay(1); 
+}
 // =========================
 // --- Funções gráficas ----
-void putPixelMemory(int x, int y, int color) // Coloca um ponto qualquer na váriável a ser varrida
-{                                            // 0 <= x <= 64; 0 <= y <= 16
+
+// --- Funções de Desenho Elásticas ---
+void putPixelMemory(int x, int y, int color) { 
+    if (x < 0 || x >= larguraAtual || y < 0 || y >= 16) return;
+
     uint64_t unidade = 1;
-    uint64_t tempar = 63 - x % 64;
+    uint64_t tempar = 63 - (x % 64);
     int multiplier = 0;
-    switch (color)
-    {
-    case red:
-    {
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] |= ((unidade << tempar));
-    }
-    break;
-
-    case green:
-    {
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] |= ((unidade << tempar));
-    }
-    break;
-
-    case blue:
-    {
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] |= ((unidade << tempar));
-    }
-    break;
-
-    case yellow:
-    {
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] |= ((unidade << tempar));
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] |= ((unidade << tempar));
-    }
-    break;
-
-    case cyan:
-    {
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] |= ((unidade << tempar));
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] |= ((unidade << tempar));
-    }
-    break;
-
-    case purple:
-    {
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] |= ((unidade << tempar));
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] |= ((unidade << tempar));
-    }
-    break;
-
-    case white:
-    {
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] |= ((unidade << tempar));
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] |= ((unidade << tempar));
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] |= ((unidade << tempar));
-    }
-    break;
+    
+    // Calcula em qual bloco físico de 64px a coordenada cai
+    int painel_idx = (segmentosAtivos - 1) - (x / 64);
+    
+    switch (color) {
+        case red:
+            multiplier = 0; ledPanelRgb[painel_idx][y + (multiplier * 16)] |= ((unidade << tempar)); break;
+        case green:
+            multiplier = 1; ledPanelRgb[painel_idx][y + (multiplier * 16)] |= ((unidade << tempar)); break;
+        case blue:
+            multiplier = 2; ledPanelRgb[painel_idx][y + (multiplier * 16)] |= ((unidade << tempar)); break;
+        case yellow:
+            multiplier = 0; ledPanelRgb[painel_idx][y + (multiplier * 16)] |= ((unidade << tempar));
+            multiplier = 1; ledPanelRgb[painel_idx][y + (multiplier * 16)] |= ((unidade << tempar)); break;
+        case cyan:
+            multiplier = 1; ledPanelRgb[painel_idx][y + (multiplier * 16)] |= ((unidade << tempar));
+            multiplier = 2; ledPanelRgb[painel_idx][y + (multiplier * 16)] |= ((unidade << tempar)); break;
+        case purple:
+            multiplier = 0; ledPanelRgb[painel_idx][y + (multiplier * 16)] |= ((unidade << tempar));
+            multiplier = 2; ledPanelRgb[painel_idx][y + (multiplier * 16)] |= ((unidade << tempar)); break;
+        case white:
+            multiplier = 0; ledPanelRgb[painel_idx][y + (multiplier * 16)] |= ((unidade << tempar));
+            multiplier = 1; ledPanelRgb[painel_idx][y + (multiplier * 16)] |= ((unidade << tempar));
+            multiplier = 2; ledPanelRgb[painel_idx][y + (multiplier * 16)] |= ((unidade << tempar)); break;
     }
 }
 
-void clearPixelMemory(int x, int y, int color) // Limpa um ponto qualquer na váriável a ser varrida
-{                                              // 0 <= x <= 64; 0 <= y <= 16
+void clearPixelMemory(int x, int y, int color) {
+    if (x < 0 || x >= larguraAtual || y < 0 || y >= 16) return;
+
     uint64_t unidade = 1;
-    uint64_t tempar = 63 - x % 64;
+    uint64_t tempar = 63 - (x % 64);
     int multiplier = 0;
-    switch (color)
-    {
-    case red:
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] &= (~(unidade << tempar));
-        // uint32_t temp1 = ledPanelRgb[2][i]>>32;
-        // uint32_t temp2 = ledPanelRgb[2][i];
-        // Serial.println(temp1,HEX);
-        // Serial.println(temp2,HEX);
-
-        break;
-    case green:
-        /* code */
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] &= (~(unidade << tempar));
-        break;
-
-    case blue:
-        /* code */
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] &= (~(unidade << tempar));
-        break;
-    case yellow:
-    {
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] &= (~(unidade << tempar));
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] &= (~(unidade << tempar));
-    }
-    break;
-
-    case cyan:
-    {
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] &= (~(unidade << tempar));
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] &= (~(unidade << tempar));
-    }
-    break;
-
-    case purple:
-    {
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] &= (~(unidade << tempar));
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] &= (~(unidade << tempar));
-    }
-    break;
-
-    case white:
-    {
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] &= (~(unidade << tempar));
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] &= (~(unidade << tempar));
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 16)] &= (~(unidade << tempar));
-    }
-    break;
+    
+    int painel_idx = (segmentosAtivos - 1) - (x / 64);
+    
+    switch (color) {
+        case red:
+            multiplier = 0; ledPanelRgb[painel_idx][y + (multiplier * 16)] &= (~(unidade << tempar)); break;
+        case green:
+            multiplier = 1; ledPanelRgb[painel_idx][y + (multiplier * 16)] &= (~(unidade << tempar)); break;
+        case blue:
+            multiplier = 2; ledPanelRgb[painel_idx][y + (multiplier * 16)] &= (~(unidade << tempar)); break;
+        case yellow:
+            multiplier = 0; ledPanelRgb[painel_idx][y + (multiplier * 16)] &= (~(unidade << tempar));
+            multiplier = 1; ledPanelRgb[painel_idx][y + (multiplier * 16)] &= (~(unidade << tempar)); break;
+        case cyan:
+            multiplier = 1; ledPanelRgb[painel_idx][y + (multiplier * 16)] &= (~(unidade << tempar));
+            multiplier = 2; ledPanelRgb[painel_idx][y + (multiplier * 16)] &= (~(unidade << tempar)); break;
+        case purple:
+            multiplier = 0; ledPanelRgb[painel_idx][y + (multiplier * 16)] &= (~(unidade << tempar));
+            multiplier = 2; ledPanelRgb[painel_idx][y + (multiplier * 16)] &= (~(unidade << tempar)); break;
+        case white:
+            multiplier = 0; ledPanelRgb[painel_idx][y + (multiplier * 16)] &= (~(unidade << tempar));
+            multiplier = 1; ledPanelRgb[painel_idx][y + (multiplier * 16)] &= (~(unidade << tempar));
+            multiplier = 2; ledPanelRgb[painel_idx][y + (multiplier * 16)] &= (~(unidade << tempar)); break;
     }
 }
+
 
 void drawBoxTeams(int team, const bool ch[], int color) // função para desenhar as caixas dos números
 {
@@ -1145,24 +1066,20 @@ void defineBox(int team, bool flagRed, bool flagGreen, bool flagBlue, bool flagY
         drawBoxTeams(team, boxTeam512, yellow);
 }
 
-void initializerPanel(int color) // Função para desenhar um caixote branco em todo o painel
-{
-    for (int i = 0; i < 16; i++)
-    {
+void initializerPanel(int color) {
+    int max_x = larguraAtual - 1;
+    for (int i = 0; i < 16; i++) {
         putPixelMemory(0, i, color);
-        putPixelMemory(127, i, color);
-        putPixelMemory(63, i, color);
-        putPixelMemory(64, i, color);
+        putPixelMemory(max_x, i, color);
+        putPixelMemory(max_x / 2, i, color);
+        putPixelMemory((max_x / 2) + 1, i, color);
     }
-
-    for (int i = 0; i < 64; i++)
-    {
+    for (int i = 0; i <= max_x; i++) {
         putPixelMemory(i, 0, color);
-        putPixelMemory(64 + i, 15, color);
+        putPixelMemory(i, 15, color);
     }
-
-    plotMinistry(0);
 }
+
 
 void toggleOutputEnable() //
 {
