@@ -10,28 +10,13 @@
 
 // =================================
 // --- Mapeamento de Hardware ---
-// const int ledPin;
-#define CLK (1 << PORTB5)  // 13 Essa definição serve para usar o clock do painel sem usar a função da biblioteca
-#define DS (1 << PORTB2)   // 10 // Data select
-#define MOSI (1 << PORTB3) // 11
-
-// #define LAT (1 << PORTD7) // 7
-#define LAT (1 << PORTD6) // 7
-// #define A (1 << PORTD4)   // 4
-#define A (1 << PORTD5) // 4
-// #define B (1 << PORTD5)   // 3
-#define B (1 << PORTD4) // 3
-// #define OE (1 << PORTD6)  // 5 // Vai passar a ser o 5, pois tem sinal de pwm
-#define OE (1 << PORTD7) // 5 // Vai passar a ser o 5, pois tem sinal de pwm
-
-// Pinos de controle do painel LED para ESP32
-#define CLK_PIN 13  // #define CLK_PIN 18
-#define DS_PIN 10   // #define DS_PIN 5
-#define MOSI_PIN 11 // #define MOSI_PIN 23
-#define LAT_PIN 6   // #define LAT_PIN 2
-#define A_PIN 5     // #define A_PIN 21
-#define B_PIN 4     // #define B_PIN 16
-#define OE_PIN 7    // #define OE_PIN 4
+// Pinos do ESP32-C3
+constexpr int PIN_LAT = 0;
+constexpr int PIN_OE = 1;
+constexpr int PIN_B = 3;
+constexpr int PIN_A = 4;
+constexpr int PIN_CLK = 6;
+constexpr int PIN_DATA = 7;
 
 // ==============================
 // --- Definição de variáveis ---
@@ -95,17 +80,17 @@ enum alfabeto
 // --- Estrutura das funções ---
 void ledDisplayBegin() // Função de configuração inicial
 {
-    // Serial.begin(115200); // Inicia a comunicação Serial
+    // Configuração das portas
+    pinMode(PIN_A, OUTPUT);
+    pinMode(PIN_B, OUTPUT);
+    pinMode(PIN_LAT, OUTPUT);
+    pinMode(PIN_OE, OUTPUT);
+    pinMode(PIN_CLK, OUTPUT);
+    pinMode(PIN_DATA, OUTPUT);
 
-    // -- Configuração das portas --
-    DDRD |= A | B | LAT | OE;
-    DDRB |= CLK | MOSI | DS;
+    EEPROM.begin(512); // O ESP32 exige alocar o tamanho da EEPROM na RAM primeiro
 
-    SPI.begin(); // Inicia a comunicação SPI
-    // Garante tudo esteja zerado no início
-    // clearPanelByPixel();   // Zera a variável que guarda as informações do painel
-    // cleanShiftRegisters(); // Preenche os shift Registers do painel com 0;
-
+    SPI.begin(PIN_CLK, -1, PIN_DATA, -1); // Inicia SPI nos pinos certos do ESP32
     // Configurações gráficas iniciais
     initializerPanel(white); // Desenha a Caixa branca em volta de tudo
     // drawBoxMovePanel(cyan);
@@ -168,57 +153,33 @@ void fillPanel() // preenche a variável que é exibida no painel
 // --- Funções para melhorar a compreensão do código ---
 void latchPanel()
 {
-    PORTD |= LAT;
-    PORTD &= ~LAT;
+    digitalWrite(PIN_LAT, HIGH);
+    digitalWrite(PIN_LAT, LOW);
 }
 
-void ativaLinhaImpar() // Seta B como 1 e A como 0
+void ativaLinhaImpar()
 {
-    PORTD |= B;
-    PORTD &= ~A;
+    digitalWrite(PIN_B, HIGH);
+    digitalWrite(PIN_A, LOW);
 }
 
-void ativaLinhaPar() // Seta A como 1 e B como 0
+void ativaLinhaPar()
 {
-    // digitalWrite()
-    PORTD |= A;
-    PORTD &= ~B;
+    digitalWrite(PIN_A, HIGH);
+    digitalWrite(PIN_B, LOW);
 }
 
-void melquisedeque() // Vai ficar alterando o valor de SS, para que o código rode de forma decente
+void toggleOE()
 {
-    uint8_t state = PORTB & DS;
-    if (state)
-    {
-        PORTB &= ~DS;
-    }
-    else
-    {
-        PORTB |= DS;
-    }
-}
-
-void toggleOE() // Vai ficar alterando o valor de OE, para que o código rode de forma decente
-{
-    uint8_t state = (PORTD & OE);
-    // Serial.println(state>>5, BIN);
-    Serial.println(state);
-    if (state >> 5)
-    {
-        PORTD &= ~OE;
-    }
-    else
-    {
-        PORTD |= OE;
-    }
+    // Lê o estado atual e inverte (substitui o bitshift maluco do Uno)
+    digitalWrite(PIN_OE, !digitalRead(PIN_OE));
 }
 
 void desativaTudo()
 {
-    PORTD |= B;
-    PORTD |= A;
+    digitalWrite(PIN_B, HIGH);
+    digitalWrite(PIN_A, HIGH);
 }
-
 // ===========================================
 // --- Funções de funcionamento de projeto ---
 void updatePanel()
@@ -259,9 +220,9 @@ void updatePanel()
                         // Porem a informação do painel é uma variável de 64 bits, tendo que ser repartida 4 vezes para ser enviada para os paineis
                         uint16_t slicedInfo = (ledPanelRgb[painel][linhas] >> 16 * displayID); // O right shift serve para saber qual pedado de ledPanelRgb[2][] deve ser enviado naquele momento
                         SPI.beginTransaction(SPISettings(4000000, LSBFIRST, SPI_MODE0));
-                        melquisedeque();
+                        
                         SPI.transfer16(slicedInfo); // Responsável por enviar a informação para os shiftregisters do painel
-                        melquisedeque();
+                        
                         SPI.endTransaction();
                         /* code */
                     }
@@ -271,9 +232,9 @@ void updatePanel()
             {
                 // for (int qnt = 0; qnt < 32; qnt++)
                 // {
-                // melquisedeque();
+                // 
                 // SPI.transfer16(0); // Responsável por enviar a informação para os shiftregisters do painel
-                // melquisedeque();
+                // 
                 for (int displayID = 3; displayID >= 0; displayID--) // Isso é a indicação de 4 displays
                 {
                     for (int linhas = (15 + cores * 16); linhas >= (cores * 16); linhas -= 2) // Vai descarregar as linhas ímpares de cada painel, 8 linhas por vez
@@ -283,9 +244,9 @@ void updatePanel()
                         // Porem a informação do painel é uma variável de 64 bits, tendo que ser repartida 4 vezes para ser enviada para os paineis
                         uint16_t slicedInfo = (ledPanelRgb[painel][linhas] >> 16 * displayID); // O right shift serve para saber qual pedado de ledPanelRgb[2][] deve ser enviado naquele momento
                         SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
-                        melquisedeque();
+                        
                         SPI.transfer16(slicedInfo); // Responsável por enviar a informação para os shiftregisters do painel
-                        melquisedeque();
+                        
                         SPI.endTransaction();
                         /* code */
                     }
@@ -296,7 +257,7 @@ void updatePanel()
     latchPanel();    // Manda sinal de Latch para os shiftRegisters liberando a saída das informações para as memórias
     ativaLinhaPar(); // Ativa para que as linhas pares sejam ativas e a informação mostrada
     toggleOE();
-    _delay_ms(1); // Delay necessário para que os nossos olhos percebam a ativação do painel de forma devida
+    delay(1); // Delay necessário para que os nossos olhos percebam a ativação do painel de forma devida
     // -- Carrega os espaços de memória dos shift registers para as linhas impares serem exibidas --
 
     desativaTudo();
@@ -317,9 +278,9 @@ void updatePanel()
                         // Porem a informação do painel é uma variável de 64 bits, tendo que ser repartida 4 vezes para ser enviada para os paineis
                         uint16_t slicedInfo = (ledPanelRgb[painel][linhas] >> 16 * displayID); // O right shift serve para saber qual pedado de ledPanelRgb[2][] deve ser enviado naquele momento
                         SPI.beginTransaction(SPISettings(4000000, LSBFIRST, SPI_MODE0));
-                        melquisedeque();
+                        
                         SPI.transfer16(slicedInfo); // Responsável por enviar a informação para os shiftregisters do painel
-                        melquisedeque();
+                        
                         SPI.endTransaction();
                         /* code */
                     }
@@ -329,9 +290,9 @@ void updatePanel()
             {
                 // for (int qnt = 0; qnt < 32; qnt++)
                 // {
-                // melquisedeque();
+                // 
                 // SPI.transfer16(0); // Responsável por enviar a informação para os shiftregisters do painel
-                // melquisedeque();
+                // 
                 for (int displayID = 3; displayID >= 0; displayID--) // Isso é a indicação de 4 displays
                 {
                     for (int linhas = (14 + cores * 16); linhas >= (cores * 16); linhas -= 2) // Vai descarregar as linhas ímpares de cada painel, 8 linhas por vez
@@ -341,9 +302,9 @@ void updatePanel()
                         // Porem a informação do painel é uma variável de 64 bits, tendo que ser repartida 4 vezes para ser enviada para os paineis
                         uint16_t slicedInfo = (ledPanelRgb[painel][linhas] >> 16 * displayID); // O right shift serve para saber qual pedado de ledPanelRgb[2][] deve ser enviado naquele momento
                         SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
-                        melquisedeque();
+                        
                         SPI.transfer16(slicedInfo); // Responsável por enviar a informação para os shiftregisters do painel
-                        melquisedeque();
+                        
                         SPI.endTransaction();
                         /* code */
                     }
@@ -364,9 +325,9 @@ void updatePanel()
     //                 // para que a informação seja enviada para o painel, está sendo utilizado o periférico de SPI do microcontrolador
     //                 // Porem a informação do painel é uma variável de 64 bits, tendo que ser repartida 4 vezes para ser enviada para os paineis
     //                 uint16_t slicedInfo = (ledPanelRgb[painel][linhas] >> 16 * displayID); // O right shift serve para saber qual pedado de ledPanelRgb[2][] deve ser enviado naquele momento
-    //                 melquisedeque();
+    //                 
     //                 SPI.transfer16(slicedInfo); // Responsável por enviar a informação para os shiftregisters do painel
-    //                 melquisedeque();
+    //                 
     //                 /* code */
     //             }
     //         }
@@ -375,7 +336,7 @@ void updatePanel()
     latchPanel();      // Manda sinal de Latch para os shiftRegisters liberando a saída das informações para as memórias
     ativaLinhaImpar(); // Ativa para que as linhas impares sejam ativas e a informação mostrada
     toggleOE();
-    _delay_ms(1); // Delay necessário para que os nossos olhos percebam a ativação do painel de forma devida
+    delay(1); // Delay necessário para que os nossos olhos percebam a ativação do painel de forma devida
 
 } //  --- Fim da função ---
 
@@ -904,18 +865,10 @@ void SetTheBoxesExtra() // Função para chamar os desenhos no painel
     drawBoxTeams(2, boxTeam512, green); // Bear
 }
 
-void configPWM(int intensidade) // Função ainda falha, mas que deve ser desenvolvida para controle de luminosidade
+void configPWM(int intensidade)
 {
-    // DDRD  |=  OE; // Configura novamente o pino OE como saída, mesmo que ele já tenha sido configurado anteriormente
-    // PORTD &- ~OE; // Inicia ele desligado por padrão
-
-    TCCR2A = 0XA3; // Configura operação em fast PWM, utilizando registradores OCR2
-
-    char valorfrequencia = 5; // referente a 244.14 Hz
-    TCCR2B = valorfrequencia;
-
-    // int duty = 230;
-    OCR2B = intensidade;
+    // Função original usava registradores AVR (TCCR2A).
+    // No ESP32, usaremos LEDC no futuro para gerenciar o brilho.
 }
 
 void configScore()
@@ -1066,9 +1019,9 @@ void cleanShiftRegisters() // Limpa todos os shiftregisters antes da função up
     for (size_t i = 0; i < 192; i++)
     {
         /* code */
-        melquisedeque();
+        
         SPI.transfer16(0x0);
-        melquisedeque();
+        
         latchPanel();
     }
 }
@@ -1077,9 +1030,9 @@ void fillShiftRegisters() // Preenche todos os shift registers, mas não tem fun
 {
     for (size_t i = 0; i < 192; i++)
     {
-        melquisedeque();
+        
         SPI.transfer16(~0);
-        melquisedeque();
+        
         latchPanel();
     }
 }
@@ -1685,9 +1638,9 @@ void subtraiPontosEquipes(int time)
 void PlotLinha()
 {
     SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
-    melquisedeque();
+    
     SPI.transfer16(0xFFFF); // Responsável por enviar a informação para os shiftregisters do painel
-    melquisedeque();
+    
     SPI.endTransaction();
 
     latchPanel();
@@ -1696,10 +1649,10 @@ void PlotLinha()
 void ZeroData()
 {
     SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
-    melquisedeque();
+    
     for (int i = 0; i < 8 * 8 * 3; i++)
         SPI.transfer16(0x0000); // Responsável por enviar a informação para os shiftregisters do painel
-    melquisedeque();
+    
     SPI.endTransaction();
 
     latchPanel();
@@ -1735,25 +1688,17 @@ void ComandosSerial()
 
         // Formato do comando: "PIN X" ou "PIN X ON|OFF"
         if (cmd.startsWith("A "))
-            digitalWrite(A_PIN, cmd.endsWith("ON") ? HIGH : LOW);
+            digitalWrite(PIN_A, cmd.endsWith("ON") ? HIGH : LOW);
         else if (cmd.startsWith("B "))
-            digitalWrite(B_PIN, cmd.endsWith("ON") ? HIGH : LOW);
+            digitalWrite(PIN_B, cmd.endsWith("ON") ? HIGH : LOW);
         else if (cmd.startsWith("CLK"))
-            digitalWrite(CLK_PIN, cmd.endsWith("ON") ? HIGH : LOW);
-        else if (cmd.startsWith("MOSI"))
-            digitalWrite(MOSI_PIN, cmd.endsWith("ON") ? HIGH : LOW);
-        else if (cmd.startsWith("DS"))
-            digitalWrite(DS_PIN, cmd.endsWith("ON") ? HIGH : LOW);
+            digitalWrite(PIN_CLK, cmd.endsWith("ON") ? HIGH : LOW);
+        else if (cmd.startsWith("MOSI") || cmd.startsWith("DS"))
+            digitalWrite(PIN_DATA, cmd.endsWith("ON") ? HIGH : LOW);
         else if (cmd.startsWith("OE"))
-            digitalWrite(OE_PIN, cmd.endsWith("ON") ? HIGH : LOW);
+            digitalWrite(PIN_OE, cmd.endsWith("ON") ? HIGH : LOW);
         else if (cmd.startsWith("LAT"))
-            digitalWrite(LAT_PIN, cmd.endsWith("ON") ? HIGH : LOW);
-        else if (cmd.startsWith("PORTS"))
-        {
-
-            Serial.println(PORTD, BIN);
-            Serial.println(PORTB, BIN);
-        }
+            digitalWrite(PIN_LAT, cmd.endsWith("ON") ? HIGH : LOW);
         else if (cmd.startsWith("PLOTLINHA"))
             PlotLinha();
         else if (cmd.startsWith("ZERODATA"))

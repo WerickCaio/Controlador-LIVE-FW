@@ -17,7 +17,7 @@ void latchPanel();
 void ativaLinhaPar();
 void ativaLinhaImpar();
 void desativaTudo();
-void melquisedeque(); // Função de Toggle do estado do pino / Usado quando a função de SPI é chamada
+// void melquisedeque(); // Função de Toggle do estado do pino / Usado quando a função de SPI é chamada
 void toggleOE(); // Ativa ou desativa o pino OE, mas se torna obsoleto quando utilizado o analogWrite
 
 // -- Funções importantes do código

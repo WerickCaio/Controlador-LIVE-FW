@@ -7,9 +7,10 @@
 //
 // // ===================================
 // // --- Inclusão das bibliotecas ---
+#include <Arduino.h>
 #include <LedControl.h>
-#include <util/delay.h>
-#include <SoftwareSerial.h>
+// #include <util/delay.h>
+// #include <SoftwareSerial.h>
 #include "Debug.h"
 
 // times para estarem no painel
@@ -41,12 +42,15 @@ unsigned long debounceDelay = 500;  // the debounce time; increase if the output
 
 // #define DebounceTime 75
 
+#define RX_PIN 20 // Exemplo de pino, pode mudar
+#define TX_PIN 21 // Exemplo de pino, pode mudar
+
 const int Quantidade_De_Comandos = 30;
 const long intervaloDeExibicao = 3000; // 1 segundo para LED 1
 const long intervalLed2 = 2000;        // 2 segundos para LED 2
 
 // Define os pinos para SoftwareSerial
-SoftwareSerial bluetooth(3, 2); // RX, TX
+// SoftwareSerial bluetooth(3, 2); // RX, TX
 
 enum alfabeto
 {
@@ -148,56 +152,60 @@ enum State
 };
 
 State currentState = STATE_1; // Estado inicial
-void (*funcReset)() = 0;
+// void (*funcReset)() = 0;
 // -----------------------------------------------------------------
 // --- FUNÇÕES DE TESTE ---
+
 int checkBluetoothCommands()
 {
-  // Serial.print("to aqui");
-  String entrada = ""; // String para armazenar a entrada de dados
+  String entrada = "";
 
-  if (bluetooth.available() == 0)
-    return -1;
-  while (bluetooth.available())
+  // 1. Checa a porta Serial do Cabo USB
+  if (Serial.available() > 0)
   {
-    char caractere = bluetooth.read(); // Lê um caractere por vez
-    if (isDigit(caractere))
-    {
-      entrada += caractere; // Adiciona o caractere à string se for um dígito
+    entrada = Serial.readStringUntil('\n'); // Lê tudo até o Enter
+    entrada.trim(); // Arranca os invisíveis do CRLF e espaços
+
+    if (entrada.length() == 0) return -1; // Se foi só um Enter vazio, ignora
+
+    int comando = entrada.toInt();
+    
+    // Se o comando deu 0, mas o usuário NÃO digitou "0" (ex: digitou letras ou sujeira)
+    if (comando == 0 && entrada != "0") {
+        Serial.print("[AVISO] Comando Desconhecido (USB): ");
+        Serial.println(entrada);
+        return -1;
     }
-    // char command = bluetooth.read(); // Lê o comando enviado pelo celulaR
 
-    // Ignora caracteres de controle
-    // if (command != '\r' && command != '\n')
-    // {
-    //   Serial.print("Received: ");
-    //   Serial.println(command);
-
-    //   // Controle dos LEDs baseado no comando recebido
-    //   if (command >= '0' && command < '0' + Quantidade_De_Comandos)
-    //   {
-    //     int ledIndex = command - '0'; // Converte o caractere para índice
-    //     // digitalWrite(ledPins[ledIndex], HIGH); // Liga o LED correspondente
-    //     Serial.print("LED ");
-    //     Serial.print(ledIndex);
-    //     Serial.println(" ON");
-    //     // } else if (command >= 'A' && command < 'A' + numLeds) {
-    //     //     int ledIndex = command - 'A'; // Converte o caractere para índice
-    //     //     digitalWrite(ledPins[ledIndex], LOW); // Desliga o LED correspondente
-    //     //     Serial.print("LED ");
-    //     //     Serial.print(ledIndex);
-    //     //     Serial.println(" OFF");
-
-    //     // return ledIndex;
-    // }
+    Serial.print(">>> Comando via USB Executado: ");
+    Serial.println(comando);
+    return comando;
   }
 
-  DEBUG_PRINT("Comando recebido: ");
-  DEBUG_PRINTLN(entrada.toInt());
-  // Serial.println(entrada.toInt());
-  return entrada.toInt(); // Converte a string recebida em número inteiro
-  // return -1;
+  // 2. Checa o Módulo Bluetooth (Pinos RX/TX)
+  if (Serial1.available() > 0)
+  {
+    entrada = Serial1.readStringUntil('\n');
+    entrada.trim();
+
+    if (entrada.length() == 0) return -1;
+
+    int comando = entrada.toInt();
+    
+    if (comando == 0 && entrada != "0") {
+        Serial.print("[AVISO] Comando Desconhecido (BT): ");
+        Serial.println(entrada);
+        return -1;
+    }
+
+    Serial.print(">>> Comando via Bluetooth Executado: ");
+    Serial.println(comando);
+    return comando;
+  }
+
+  return -1; // Nenhum comando recebido
 }
+
 
 void plotNomeDasEquipes()
 {
@@ -259,9 +267,14 @@ void plotCaixaPontuacao()
 // --- Função de configuração ---
 void setup()
 {
-  ledDisplayBegin();     // Configura SPI, Serial e Configurações de porta para o Uso do LED
-  Serial.begin(9600);    // Comunicação Serial com o PC
-  bluetooth.begin(9600); // Comunicação Serial com o módulo Bluetooth
+  ledDisplayBegin();  // Configura SPI, Serial e Configurações de porta para o Uso do LED
+  Serial.begin(9600); // Comunicação Serial com o PC
+  // bluetooth.begin(9600); // Comunicação Serial com o módulo Bluetooth
+  Serial1.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
+
+  // Tira o "delay" natural de 1 segundo da porta serial e baixa para 20 milissegundos
+  Serial.setTimeout(20);
+  Serial1.setTimeout(20);
 
   Serial.println("Bluetooth ready");
   // desativaTudo(); // Sobre isso, tenho que Checar as conexões de OE, pois o painel não desligava quando esse pino estava sendo colocado em nível lógico alto
@@ -322,9 +335,9 @@ void loop()
     //   Serial.print("Received: ");
     //   Serial.println(command);
     // }
-    if (bluetooth.available())
+    if (Serial1.available())
     {
-      char command = bluetooth.read(); // Lê o comando
+      char command = Serial1.read(); // Lê o comando
 
       if (command != '\r' && command != '\n')
       {
@@ -342,8 +355,8 @@ void loop()
     if (Serial.available())
     {
       char c = Serial.read();
-      bluetooth.print("Recieved: ");
-      bluetooth.write(c);
+      Serial1.print("Recieved: ");
+      Serial1.write(c);
     }
   }
   break;
@@ -410,7 +423,8 @@ void loop()
     switch (comandoRecebido)
     {
     case Ir_Para_Idle:
-      funcReset();
+      // ESP.restart();
+      ESP.restart();
       panelPlayerState = start;
 
       break;
@@ -597,7 +611,7 @@ void loop()
     // Serial.println("I'm initcounter");
     int buttonPressed = 1452;
     if (buttonPressed == 0x2C)
-      funcReset(); // Muda a flag informando que no painel 3, os pontos irão aumentar até o valor estipulado
+      ESP.restart(); // Muda a flag informando que no painel 3, os pontos irão aumentar até o valor estipulado
   }
   break;
 
@@ -636,110 +650,5 @@ void loop()
   // alteraPontosTeam(4);
   // alteraPontosTeam(5);
   updatePanel(); // Função de atualização do painel
-  ComandosSerial();
+  // ComandosSerial();
 }
-
-// int 1452 // Função para checar se o botão foi pressionado e devolve o dígito do botão pressionado
-// {
-//   // Serial.println("Estou Checando se tem botão a ser pressionado");
-//   // Assim a contagem de tempo deve estar sempre sendo feita aqui
-//   static bool buttonPressedFlag = 0;
-//   static long long buttonDebounce = 0;
-//   static int contador = 0 ;
-
-//   if (IrReceiver.decode() && !buttonPressedFlag) // Ou seja, nesse ponto do código ele verá se chegou sinal do controle e se é a primera vez que está acontecendo isso
-//   {
-//     // Serial.println("Fui acionado a primeira vez");
-//     buttonPressedFlag = 1; // Ativa a flag indicando que o sinal chegou
-//     buttonDebounce = millis(); // Inicia a contagem do tempo em que o botão foi pressionado // E isso só acontece a primeira vez, então a variável de tempo é guardada
-//   }
-
-//   if (IrReceiver.decode() && buttonPressedFlag && (buttonDebounce + DebounceTime < millis())) // Nesse ponto do código ainda estamos confirmando que o sinal há e que a flag foi levantada
-//   {
-
-//     // Serial.println("Quero saber quantas vezes estou sendo acionado aqui");
-//     contador++;
-//     Serial.println(contador);
-
-//     // Bem aqui só entra no código se algum sinal for detectado vindo do controle, então  deve ser levantada a flag e ficar sendo sempre comparada com uma variável de tempo
-//     // buttonPressedFlag = 1;
-//     // Assim, toda vez que o botão for pressionado, essa primeira flag levantará e deve permitir que o código seguinte continue rodando
-//       IrReceiver.resume(); // Enable receiving of the next value
-
-//       if (IrReceiver.decodedIRData.address == 0) // Inicia a comparação do botão que foi pressionado
-//       {
-//         // Serial.println("Entrei da decodificação");
-//         return IrReceiver.decodedIRData.command;
-//       } // Fim do if de comparação dos comandos do controle
-//   } // Fim do if de detecção de sinal
-
-//     if (!IrReceiver.decode() && buttonPressedFlag && (buttonDebounce + DebounceTime < millis())) // Nesse ponto do código ainda estamos confirmando que o sinal há e que a flag foi levantada
-//   {
-//     // Serial.println("Acabei de resetar essa bagaça");
-//       buttonPressedFlag = 0;
-//   } // Fim do if de detecção de sinal
-
-//   return 200;
-// }
-
-// --- FIM DE CÓDIGO ---
-// =====================
-
-// =====================================================================================
-// --- Lista de comandos do controle de cima para baixo e da esquerda para a direita ---
-// 12
-// 49
-// 48
-// ?
-// 43
-// 44
-// 40
-// 204
-// 191
-// 245
-// 56
-// 84
-// 159
-// 109
-// 110
-// 111
-// 112
-// 15
-// 88
-// 644
-// 90
-// 92
-// 91
-// 10
-// 89
-// 210
-// 16
-// 32
-// 13
-// 17
-// 33
-// 1
-// 2
-// 3
-// 4
-// 5
-// 6
-// 7
-// 8
-// 9
-// 70
-// 0
-// 217
-
-/* Guardando essa parte para estruturar melhor como o meu código é identificado
-     Q0447-Sketch-2.ino
-     AUTOR:   BrincandoComIdeias
-     LINK:    https://www.youtube.com/brincandocomideias ; https://cursodearduino.net/
-     COMPRE:  https://www.arducore.com.br/
-     SKETCH:  Reset via Código (Usando Função no Endereço Zero)
-     DATA:    ../../....
-
-   ATUALIZACAO: em ../../.... por .... o que .......
-*/
-
-// void (*funcReset)() = 0;
