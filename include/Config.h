@@ -14,7 +14,7 @@ constexpr int PIN_CLK   = 6;
 constexpr int PIN_DATA  = 7;
 
 // Pino do Sonar (Auto-detecção de tamanho do painel)
-constexpr int PIN_RETORNO = 8;
+constexpr int PIN_RETORNO = 2;
 
 // Pinos de Comunicação Serial (Módulo Bluetooth HC-05)
 constexpr int RX_PIN = 20;
