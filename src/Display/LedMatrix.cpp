@@ -56,11 +56,8 @@ void Display_ClearPixel(int x, int y, int color) {
 }
 
 void Display_Clear() {
-    for (size_t j = 0; j < 128; j++) {
-        for (size_t i = 0; i < 32; i++) { 
-            Display_ClearPixel(j, i, white); 
-        }
-    }
+    // Adeus, fantasmas! O memset "zera" toda a matriz de vídeo instantaneamente.
+    memset(ledPanelRgb, 0, sizeof(ledPanelRgb));
 }
 
 void Display_Init() {
@@ -77,15 +74,20 @@ void Display_Init() {
     }
 }
 
-void Display_TestPattern() {
-    Display_Clear();
-    // Painel de Cima (Vermelho)
-    for (int x = 0; x < 128; x++) { Display_PutPixel(x, 0, red); Display_PutPixel(x, 15, red); }
-    for (int y = 0; y < 16; y++) { Display_PutPixel(0, y, red); Display_PutPixel(127, y, red); }
+void Display_TestPattern(int offset_x) {
+    Display_Clear(); 
 
-    // Painel de Baixo (Azul)
-    for (int x = 0; x < 128; x++) { Display_PutPixel(x, 16, blue); Display_PutPixel(x, 31, blue); }
-    for (int y = 16; y < 32; y++) { Display_PutPixel(0, y, blue); Display_PutPixel(127, y, blue); }
+    // Desenha na fileira de CIMA (Que está de cabeça para baixo fisicamente)
+    Display_DrawChar('C', offset_x + 0, 3, red);
+    Display_DrawChar('A', offset_x + 11, 3, red);
+    Display_DrawChar('S', offset_x + 22, 3, red);
+    Display_DrawChar('A', offset_x + 33, 3, red);
+
+    // Desenha na fileira de BAIXO (Que está na posição normal fisicamente)
+    Display_DrawChar('B', offset_x + 0, 19, red);
+    Display_DrawChar('A', offset_x + 11, 19, red);
+    Display_DrawChar('S', offset_x + 22, 19, red);
+    Display_DrawChar('E', offset_x + 33, 19, red);
 }
 
 void Display_DrawChar(char c, int x, int y, int color) {
@@ -124,41 +126,45 @@ void Display_ClearCharArea(int x, int y, int color) {
 // ======================================================================
 // VARREDURA SPI CASCATA 128x32
 // ======================================================================
+// ======================================================================
+// VARREDURA SPI CASCATA 128x32 (TOPOLOGIA EM "SERPENTE")
+// Topo: De cabeça para baixo | Base: Normal
+// Fim da Linha (Push 1): Base-Direita (Painel 16)
+// ======================================================================
 void Display_Update() {
     HAL_DisableLines(); 
 
-    // --- LINHAS PARES ---
+    // ====================================================
+    // --- LINHAS PARES FÍSICAS (A=1, B=0) ---
+    // ====================================================
     for (int cores = 2; cores >= 0; cores--) {
-        // Envia os dados do Painel de BAIXO (Linhas 16 a 31)
-        for (int painel = 0; painel <= 1; painel++) {
-            if (!painel) {
-                for (int displayID = 0; displayID <= 3; displayID++) {
-                    for (int linhas = (16 + cores * 32); linhas <= (30 + cores * 32); linhas += 2) {
-                        HAL_SpiTransferNormal((ledPanelRgb[painel][linhas] >> (16 * displayID)));
-                    }
-                }
-            } else {
-                for (int displayID = 3; displayID >= 0; displayID--) {
-                    for (int linhas = (31 + cores * 32); linhas >= (17 + cores * 32); linhas -= 2) {
-                        HAL_SpiTransferInverted((ledPanelRgb[painel][linhas] >> (16 * displayID)));
-                    }
-                }
+        
+        // 1. BASE-DIREITA (Normal, painel 0, Y: 16..31)
+        for (int displayID = 0; displayID <= 3; displayID++) {
+            for (int linhas = 16 + cores * 32; linhas <= 30 + cores * 32; linhas += 2) {
+                HAL_SpiTransferNormal((ledPanelRgb[0][linhas] >> (16 * displayID)));
             }
         }
-        // Envia os dados do Painel de CIMA (Linhas 0 a 15)
-        for (int painel = 0; painel <= 1; painel++) {
-            if (!painel) {
-                for (int displayID = 0; displayID <= 3; displayID++) {
-                    for (int linhas = (0 + cores * 32); linhas <= (14 + cores * 32); linhas += 2) {
-                        HAL_SpiTransferNormal((ledPanelRgb[painel][linhas] >> (16 * displayID)));
-                    }
-                }
-            } else {
-                for (int displayID = 3; displayID >= 0; displayID--) {
-                    for (int linhas = (15 + cores * 32); linhas >= (1 + cores * 32); linhas -= 2) {
-                        HAL_SpiTransferInverted((ledPanelRgb[painel][linhas] >> (16 * displayID)));
-                    }
-                }
+
+        // 2. BASE-ESQUERDA (Normal, painel 1, Y: 16..31)
+        for (int displayID = 0; displayID <= 3; displayID++) {
+            for (int linhas = 16 + cores * 32; linhas <= 30 + cores * 32; linhas += 2) {
+                HAL_SpiTransferNormal((ledPanelRgb[1][linhas] >> (16 * displayID)));
+            }
+        }
+
+        // 3. TOPO-ESQUERDA (Invertido, painel 1, Y: 0..15)
+        // Como o painel está de cabeça para baixo, as linhas pares físicas mapeiam as linhas ÍMPARES da imagem (de trás pra frente)
+        for (int displayID = 3; displayID >= 0; displayID--) {
+            for (int linhas = 15 + cores * 32; linhas >= 1 + cores * 32; linhas -= 2) {
+                HAL_SpiTransferInverted((ledPanelRgb[1][linhas] >> (16 * displayID)));
+            }
+        }
+
+        // 4. TOPO-DIREITA (Invertido, painel 0, Y: 0..15)
+        for (int displayID = 3; displayID >= 0; displayID--) {
+            for (int linhas = 15 + cores * 32; linhas >= 1 + cores * 32; linhas -= 2) {
+                HAL_SpiTransferInverted((ledPanelRgb[0][linhas] >> (16 * displayID)));
             }
         }
     }
@@ -168,38 +174,37 @@ void Display_Update() {
     delay(1); 
     HAL_DisableLines();
 
-    // --- LINHAS ÍMPARES ---
+    // ====================================================
+    // --- LINHAS ÍMPARES FÍSICAS (A=0, B=1) ---
+    // ====================================================
     for (int cores = 2; cores >= 0; cores--) {
-        // Envia os dados do Painel de BAIXO
-        for (int painel = 0; painel <= 1; painel++) {
-            if (!painel) {
-                for (int displayID = 0; displayID <= 3; displayID++) {
-                    for (int linhas = (17 + cores * 32); linhas <= (31 + cores * 32); linhas += 2) {
-                        HAL_SpiTransferNormal((ledPanelRgb[painel][linhas] >> (16 * displayID)));
-                    }
-                }
-            } else {
-                for (int displayID = 3; displayID >= 0; displayID--) {
-                    for (int linhas = (30 + cores * 32); linhas >= (16 + cores * 32); linhas -= 2) {
-                        HAL_SpiTransferInverted((ledPanelRgb[painel][linhas] >> (16 * displayID)));
-                    }
-                }
+        
+        // 1. BASE-DIREITA (Normal, painel 0, Y: 16..31)
+        for (int displayID = 0; displayID <= 3; displayID++) {
+            for (int linhas = 17 + cores * 32; linhas <= 31 + cores * 32; linhas += 2) {
+                HAL_SpiTransferNormal((ledPanelRgb[0][linhas] >> (16 * displayID)));
             }
         }
-        // Envia os dados do Painel de CIMA
-        for (int painel = 0; painel <= 1; painel++) {
-            if (!painel) {
-                for (int displayID = 0; displayID <= 3; displayID++) {
-                    for (int linhas = (1 + cores * 32); linhas <= (15 + cores * 32); linhas += 2) {
-                        HAL_SpiTransferNormal((ledPanelRgb[painel][linhas] >> (16 * displayID)));
-                    }
-                }
-            } else {
-                for (int displayID = 3; displayID >= 0; displayID--) {
-                    for (int linhas = (14 + cores * 32); linhas >= (0 + cores * 32); linhas -= 2) {
-                        HAL_SpiTransferInverted((ledPanelRgb[painel][linhas] >> (16 * displayID)));
-                    }
-                }
+
+        // 2. BASE-ESQUERDA (Normal, painel 1, Y: 16..31)
+        for (int displayID = 0; displayID <= 3; displayID++) {
+            for (int linhas = 17 + cores * 32; linhas <= 31 + cores * 32; linhas += 2) {
+                HAL_SpiTransferNormal((ledPanelRgb[1][linhas] >> (16 * displayID)));
+            }
+        }
+
+        // 3. TOPO-ESQUERDA (Invertido, painel 1, Y: 0..15)
+        // Linhas ímpares físicas mapeiam as linhas PARES da imagem (de trás pra frente)
+        for (int displayID = 3; displayID >= 0; displayID--) {
+            for (int linhas = 14 + cores * 32; linhas >= 0 + cores * 32; linhas -= 2) {
+                HAL_SpiTransferInverted((ledPanelRgb[1][linhas] >> (16 * displayID)));
+            }
+        }
+
+        // 4. TOPO-DIREITA (Invertido, painel 0, Y: 0..15)
+        for (int displayID = 3; displayID >= 0; displayID--) {
+            for (int linhas = 14 + cores * 32; linhas >= 0 + cores * 32; linhas -= 2) {
+                HAL_SpiTransferInverted((ledPanelRgb[0][linhas] >> (16 * displayID)));
             }
         }
     }

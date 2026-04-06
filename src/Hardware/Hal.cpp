@@ -44,14 +44,14 @@ int HAL_PingHardware() {
 
 void HAL_SpiTransferNormal(uint16_t data) {
     // Reduzimos a velocidade de 4000000 para 500000 para evitar reflexão!
-    SPI.beginTransaction(SPISettings(500000, LSBFIRST, SPI_MODE0)); 
+    SPI.beginTransaction(SPISettings(4000000, LSBFIRST, SPI_MODE0)); 
     SPI.transfer16(data);
     SPI.endTransaction();
 }
 
 void HAL_SpiTransferInverted(uint16_t data) {
     // Reduzimos a velocidade de 4000000 para 500000 para evitar reflexão!
-    SPI.beginTransaction(SPISettings(500000, MSBFIRST, SPI_MODE0));
+    SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
     SPI.transfer16(data);
     SPI.endTransaction();
 }
