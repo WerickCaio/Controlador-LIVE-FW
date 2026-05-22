@@ -3,119 +3,186 @@
 #include "Hardware/Hal.h"
 #include "Display/LedMatrix.h"
 #include "Comms/Communication.h"
-#include "Comms/WebServer.h"
+#include "Comms/PanelServer.h"
 #include "Game/Scoreboard.h"
 
-enum stateMachine
+// ======================================================================
+//  MÁQUINA DE ESTADOS DO PLACAR
+// ======================================================================
+//
+//  TESTE_HARDWARE  → Rola texto de teste na tela.
+//                    Qualquer comando 0 avança para AGUARDANDO_INICIO.
+//
+//  AGUARDANDO_INICIO → Tela em branco aguardando o operador pressionar
+//                      "Iniciar Jogo" na web ou enviar 0 pela serial.
+//
+//  EM_JOGO         → Placar ativo. Aceita pontos, remoção, zero e save.
+//
+//  Protocolo de comandos (Wi-Fi / Serial):
+//    0               → Iniciar jogo (de qualquer estado)
+//    1 .. NUM_TEAMS  → +50 pts ao time (teamID = cmd - 1)
+//  101 .. 100+N      → -50 pts do time (teamID = cmd - 101)
+//  200               → Zerar placar
+//  201               → Salvar placar na EEPROM
+// ======================================================================
+
+enum Estado : uint8_t
 {
-    test_hardware,
-    start,
-    idle
+    TESTE_HARDWARE,
+    AGUARDANDO_INICIO,
+    EM_JOGO
 };
-uint8_t panelPlayerState = test_hardware;
 
-enum comandos
+static Estado estado = TESTE_HARDWARE;
+static int scrollOffset = -40;
+static unsigned long ultimoScroll = 0;
+
+// ── Redesenha o placar completo na tela ──────────────────────────────
+static void redesenharPlacar()
 {
-    Ir_Para_Idle = 0,
-    Cmd_AddPonto_Inicio = 1,
-    Cmd_AddPonto_Fim = 12,
-    Cmd_SubPonto_Inicio = 13,
-    Cmd_SubPonto_Fim = 24,
-    ZERA_O_PLACAR = 25,
-    GUARDA_O_PLACAR = 26
-};
-
-// --- ADICIONE ESTAS DUAS VARIÁVEIS GLOBAIS LÁ EM CIMA (antes do setup) ---
-int test_x_offset = -40;
-unsigned long lastScrollTime = 0;
-
-void setup()
-{
-    Comm_Init();
-    HAL_Init();
-
     Display_Clear();
-    DEBUG_PRINTLN("=== Modo de Teste de Hardware Iniciado ===");
-
-    WebServer_Init(); // Pode inicializar o Wi-Fi sem problemas
+    Scoreboard_DrawTeams();
+    Scoreboard_DrawBoxes();
+    Scoreboard_DrawScores();
 }
 
+// ======================================================================
+//  SETUP
+// ======================================================================
+void setup()
+{
+    Comm_Init(); // Serial (e opcionalmente BT) — antes de qualquer print
+    HAL_Init();  // Pinos, SPI, EEPROM — deve vir antes de Scoreboard_Init
+    Display_Clear();
+
+    DEBUG_PRINTLN("\n=== PLACAR ESCOLAR INICIADO ===");
+    DEBUG_PRINTF("Times configurados: %d\n", NUM_TEAMS);
+    for (int i = 0; i < NUM_TEAMS; i++)
+    {
+        DEBUG_PRINTF("  [%d] %s  (cor %d)\n", i, TIMES[i].name, TIMES[i].color);
+    }
+
+    PanelServer_Init(); // Sobe o AP Wi-Fi e servidor HTTP
+    DEBUG_PRINTLN("[Setup] Modo: TESTE_HARDWARE. Aguardando cmd 0...");
+}
+
+// ======================================================================
+//  LOOP
+// ======================================================================
 void loop()
 {
-    int comandoRecebido = Comm_GetCommand();
-    if (comandoRecebido == -1)
+    // Coleta o próximo comando (Serial tem prioridade sobre Wi-Fi)
+    int cmd = Comm_GetCommand();
+    if (cmd == -1)
     {
-        comandoRecebido = WebServer_GetCommand();
+        cmd = PanelServer_GetCommand();
     }
 
-    switch (panelPlayerState)
+    // ── TESTE_HARDWARE ───────────────────────────────────────────────
+    if (estado == TESTE_HARDWARE)
     {
-    case test_hardware:
-        // A cada 80ms, move o texto 1 pixel para a direita
-        if (millis() - lastScrollTime > 80)
+        if (millis() - ultimoScroll > 80)
         {
-            test_x_offset++;
-            if (test_x_offset > 128)
-            {
-                test_x_offset = -40; // Volta pro começo
-            }
-
-            Display_TestPattern(test_x_offset);
-            lastScrollTime = millis();
+            scrollOffset++;
+            if (scrollOffset > 128)
+                scrollOffset = -40;
+            Display_TestPattern(scrollOffset);
+            ultimoScroll = millis();
         }
 
-    case start:
-        if (comandoRecebido == Ir_Para_Idle)
+        if (cmd == 0)
         {
-            DEBUG_PRINTLN("[START] Comando 0 Recebido. Saindo do teste e indo pro Jogo!");
-
-            Scoreboard_Init();
+            DEBUG_PRINTLN("[Estado] AGUARDANDO_INICIO");
             Display_Clear();
-            Scoreboard_DrawTeams();
-            Scoreboard_DrawBoxes();
-            Scoreboard_DrawScores();
-
-            panelPlayerState = idle;
+            estado = AGUARDANDO_INICIO;
         }
-        break;
 
-    case idle:
-        bool pontuacaoAlterada = false;
+        Display_Update();
+        return; // Sai do loop aqui — evita o fall-through manual do original
+    }
 
-        if (comandoRecebido >= Cmd_AddPonto_Inicio && comandoRecebido <= Cmd_AddPonto_Fim)
+    // ── AGUARDANDO_INICIO ────────────────────────────────────────────
+    if (estado == AGUARDANDO_INICIO)
+    {
+        if (cmd == 0)
         {
-            Scoreboard_AddPoints(comandoRecebido - 1);
-            pontuacaoAlterada = true;
+            DEBUG_PRINTLN("[Estado] EM_JOGO — carregando placar...");
+            Scoreboard_Init(); // Lê EEPROM
+            redesenharPlacar();
+            estado = EM_JOGO;
         }
-        else if (comandoRecebido >= Cmd_SubPonto_Inicio && comandoRecebido <= Cmd_SubPonto_Fim)
+        Display_Update();
+        return;
+    }
+
+    // ── EM_JOGO ──────────────────────────────────────────────────────
+    if (estado == EM_JOGO)
+    {
+        bool atualizar = false;
+
+        // +50 pts ao time (cmd 1 a NUM_TEAMS)
+        if (cmd >= 1 && cmd <= NUM_TEAMS)
         {
-            Scoreboard_SubPoints(comandoRecebido - 13);
-            pontuacaoAlterada = true;
+            int teamID = cmd - 1;
+            Scoreboard_AddPoints(teamID, 50);
+            atualizar = true;
+            DEBUG_PRINTF("[Jogo] +50 → %s\n", TIMES[teamID].name);
         }
-        else if (comandoRecebido == ZERA_O_PLACAR)
+        // -50 pts do time (cmd 101 a 100+NUM_TEAMS)
+        else if (cmd >= 101 && cmd <= 100 + NUM_TEAMS)
+        {
+            int teamID = cmd - 101;
+            Scoreboard_SubPoints(teamID, 50);
+            atualizar = true;
+            DEBUG_PRINTF("[Jogo] -50 → %s\n", TIMES[teamID].name);
+        }
+        // Zerar placar
+        else if (cmd == 200)
         {
             Scoreboard_Clear();
-            pontuacaoAlterada = true;
+            atualizar = true;
+            DEBUG_PRINTLN("[Jogo] Placar zerado.");
         }
-        else if (comandoRecebido == GUARDA_O_PLACAR)
+        // Salvar placar na EEPROM
+        else if (cmd == 201)
         {
             Scoreboard_Save();
-            DEBUG_PRINTLN(">>> Placar Salvo na Memoria!");
+            DEBUG_PRINTLN("[Jogo] Placar salvo na EEPROM.");
         }
-        else if (comandoRecebido == Ir_Para_Idle)
+        // Reiniciar (volta para teste de hardware)
+        else if (cmd == 0)
         {
+            DEBUG_PRINTLN("[Jogo] Reiniciando...");
             ESP.restart();
         }
-
-        if (pontuacaoAlterada)
+        // Adicione temporariamente no loop(), dentro do case EM_JOGO:
+        else if (cmd == 99)
         {
-            Display_Clear();
-            Scoreboard_DrawTeams();
-            Scoreboard_DrawBoxes();
-            Scoreboard_DrawScores();
-        }
-        break;
-    }
+            int bits = HAL_PingHardware();
+            DEBUG_PRINTF("[DIAG] Bits detectados no daisy-chain: %d\n", bits);
+            DEBUG_PRINTF("[DIAG] Esperado para 128x32: %d\n", 128 * 3); // 3 planos RGB
 
-    Display_Update();
+            // Testa um pixel por vez nos 4 cantos
+            Display_Clear();
+            Display_PutPixel(0, 0, red);
+            delay(500);
+            Display_Update();
+            Display_PutPixel(127, 0, green);
+            delay(500);
+            Display_Update();
+            Display_PutPixel(0, 31, blue);
+            delay(500);
+            Display_Update();
+            Display_PutPixel(127, 31, white);
+            delay(500);
+            Display_Update();
+        }
+
+        if (atualizar)
+        {
+            redesenharPlacar();
+        }
+
+        Display_Update();
+    }
 }
