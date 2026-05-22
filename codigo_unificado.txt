@@ -1,0 +1,1479 @@
+﻿
+==================================================
+ARQUIVO: platformio.ini
+==================================================
+; PlatformIO Project Configuration File
+;
+;   Build options: build flags, source filter
+;   Upload options: custom upload port, speed and extra flags
+;   Library options: dependencies, extra library storages
+;   Advanced options: extra scripting
+;
+; Please visit documentation for the other options and examples
+; https://docs.platformio.org/page/projectconf.html
+
+[env:esp32-c3-supermini]
+platform = espressif32
+board = esp32-c3-devkitm-1
+framework = arduino
+monitor_speed = 115200
+build_flags = 
+    -D ARDUINO_USB_MODE=1
+    -D ARDUINO_USB_CDC_ON_BOOT=1
+
+
+==================================================
+ARQUIVO: Communication.cpp
+==================================================
+#include "Communication.h"
+#include "../include/Config.h" // Corrigido o caminho para a pasta include
+#include <Arduino.h>
+
+void Comm_Init() {
+    Serial.begin(115200);
+    // Serial1.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN); // Descomente se usar o HC-05
+    Serial.setTimeout(20);
+    // Serial1.setTimeout(20);
+}
+
+int Comm_GetCommand() {
+    String entrada = "";
+    
+    // 1. Checa a porta Serial do Cabo USB
+    if (Serial.available() > 0) {
+        entrada = Serial.readStringUntil('\n');
+        entrada.trim(); 
+        
+        if (entrada.length() == 0) return -1; 
+        
+        int comando = entrada.toInt();
+        
+        if (comando == 0 && entrada != "0") {
+            DEBUG_PRINTLN("[AVISO] Comando Desconhecido (USB)");
+            return -1;
+        }
+        return comando;
+    }
+
+    // 2. Checa o MÃ³dulo Bluetooth (Se estiver usando)
+    /*
+    if (Serial1.available() > 0) {
+        entrada = Serial1.readStringUntil('\n');
+        entrada.trim();
+        if (entrada.length() == 0) return -1;
+        
+        int comando = entrada.toInt();
+        if (comando == 0 && entrada != "0") {
+            DEBUG_PRINTLN("[AVISO] Comando Desconhecido (BT)");
+            return -1;
+        }
+        return comando;
+    }
+    */
+
+    return -1; // Nenhum comando recebido
+}
+
+==================================================
+ARQUIVO: Communication.h
+==================================================
+#pragma once
+
+void Comm_Init();
+int  Comm_GetCommand();
+
+==================================================
+ARQUIVO: WebServer.cpp
+==================================================
+#include "WebServer.h"
+#include <WiFi.h>
+#include <WebServer.h>
+
+// Instancia o servidor na porta 80 (padrÃ£o de navegadores)
+WebServer server(80);
+
+// VariÃ¡vel para guardar o comando atÃ© o loop principal buscar
+int comandoAtual = -1;
+
+// Nome da rede Wi-Fi que o placar vai criar
+const char* ssid = "Placar_C3";
+const char* password = ""; // Deixe vazio para rede aberta nos testes
+
+// =========================================================
+// PÃGINA HTML DO APLICATIVO
+// =========================================================
+void handleRoot() {
+    String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
+    html += "<style>";
+    html += "body { font-family: Arial; text-align: center; background-color: #222; color: white; margin-top: 20px; }";
+    html += "button { width: 45%; padding: 15px; margin: 5px; font-size: 18px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; }";
+    html += ".btn-start { background-color: #4CAF50; color: white; width: 93%; }";
+    html += ".btn-red { background-color: #e74c3c; color: white; }";
+    html += ".btn-blue { background-color: #3498db; color: white; }";
+    html += ".btn-yellow { background-color: #f1c40f; color: black; }";
+    html += ".btn-green { background-color: #2ecc71; color: white; }";
+    html += ".btn-zero { background-color: #e67e22; color: white; width: 93%; }";
+    html += "a { text-decoration: none; }";
+    html += "</style></head><body>";
+    
+    html += "<h2>CONTROLE DO PLACAR</h2>";
+    
+    // Comando 0: Sair do teste e iniciar o jogo
+    html += "<a href=\"/cmd?id=0\"><button class='btn-start'>INICIAR JOGO</button></a><br><br>";
+
+    html += "<h3>Adicionar Pontos (+50)</h3>";
+    html += "<a href=\"/cmd?id=1\"><button class='btn-red'>Time BUS</button></a>";     // Cmd 1 (Time 0)
+    html += "<a href=\"/cmd?id=4\"><button class='btn-blue'>Time LAN</button></a><br>"; // Cmd 4 (Time 1)
+    
+    html += "<a href=\"/cmd?id=7\"><button class='btn-yellow'>Time WOO</button></a>";   // Cmd 7 (Time 2)
+    html += "<a href=\"/cmd?id=10\"><button class='btn-green'>Time RAI</button></a><br><br>"; // Cmd 10 (Time 3)
+
+    html += "<h3>Remover Pontos (-50)</h3>";
+    html += "<a href=\"/cmd?id=13\"><button class='btn-red'>Time BUS</button></a>";     // Cmd 13 (Time 0)
+    html += "<a href=\"/cmd?id=16\"><button class='btn-blue'>Time LAN</button></a><br>"; // Cmd 16 (Time 1)
+
+    // Comando 25: Zerar placar
+    html += "<br><a href=\"/cmd?id=25\"><button class='btn-zero'>ZERAR PLACAR</button></a>";
+
+    html += "</body></html>";
+    
+    server.send(200, "text/html", html);
+}
+
+// =========================================================
+// RECEPÃ‡ÃƒO DE COMANDOS
+// =========================================================
+void handleCmd() {
+    if (server.hasArg("id")) {
+        comandoAtual = server.arg("id").toInt();
+    }
+    // Redireciona de volta para a pÃ¡gina principal para nÃ£o sair da tela
+    server.sendHeader("Location", "/");
+    server.send(303);
+}
+
+// =========================================================
+// FUNÃ‡Ã•ES PRINCIPAIS CHAMADAS PELO MAIN
+// =========================================================
+void WebServer_Init() {
+    // Inicia o ESP32 como um Roteador (Access Point)
+    WiFi.softAP(ssid, password);
+    
+    server.on("/", handleRoot);
+    server.on("/cmd", handleCmd);
+    server.begin();
+}
+
+int WebServer_GetCommand() {
+    // Atende clientes Wi-Fi rapidamente (Pooling SÃ­ncrono)
+    server.handleClient();
+    
+    int cmdTemporario = comandoAtual;
+    comandoAtual = -1; // Reseta a variÃ¡vel apÃ³s a leitura para nÃ£o repetir comando
+    
+    return cmdTemporario;
+}
+
+==================================================
+ARQUIVO: WebServer.h
+==================================================
+#pragma once
+
+void WebServer_Init();
+int  WebServer_GetCommand();
+
+==================================================
+ARQUIVO: Drawing.h
+==================================================
+#ifndef drawing_h
+  #define drawing_h
+
+  const bool Heart[30] PROGMEM = 
+  {
+    0, 1, 0, 1, 0,
+    1, 0, 1, 0, 1,
+    1, 0, 0, 0, 1,
+    0, 1, 0, 1, 0,
+    0, 0, 1, 0, 0
+  };
+  // =================================
+  // --- DefiniÃ§Ã£o dos nÃºmeros ---
+  const bool digitosAlg[10][50] PROGMEM
+  {
+  // -- DÃ­gito 0 --
+  // const bool number0[50]
+  {
+    0, 1, 1, 1, 0,
+    1, 0, 0, 0, 1,  
+    1, 0, 0, 0, 1,
+    1, 0, 0, 0, 1,  
+    1, 0, 0, 0, 1,
+    1, 0, 0, 0, 1,
+    1, 0, 0, 0, 1,
+    1, 0, 0, 0, 1,
+    1, 0, 0, 0, 1,
+    0, 1, 1, 1, 0
+  },
+
+  // -- DÃ­gito 1 --
+  // const bool number1[50]
+  {
+    0, 0, 1, 0, 0, // Linha 0
+    0, 1, 1, 0, 0, // linha 1
+    1, 0, 1, 0, 0, // Linha 2 
+    0, 0, 1, 0, 0, // Linha 3 
+    0, 0, 1, 0, 0, // Linha 4
+    0, 0, 1, 0, 0, // Linha 5
+    0, 0, 1, 0, 0, // Linha 6
+    0, 0, 1, 0, 0, // Linha 7
+    0, 0, 1, 0, 0, // Linha 8
+    1, 1, 1, 1, 1  // Linha 9
+  },
+
+  // -- DÃ­gito 2 --
+  // const bool number2[50]
+  {
+    0, 1, 1, 1, 0, // Linha 0
+    1, 0, 0, 0, 1, // linha 1
+    0, 0, 0, 0, 1, // Linha 2 
+    0, 0, 0, 0, 1, // Linha 3 
+    0, 0, 0, 1, 0, // Linha 4
+    0, 0, 1, 0, 0, // Linha 5
+    0, 1, 0, 0, 0, // Linha 6
+    1, 0, 0, 0, 0, // Linha 7
+    1, 0, 0, 0, 0, // Linha 8
+    1, 1, 1, 1, 1  // Linha 9
+  },
+
+  // -- DÃ­gito 3 --
+  // const bool number3[50]
+  {
+    0, 1, 1, 1, 0, // Linha 0
+    1, 0, 0, 0, 1, // linha 1
+    0, 0, 0, 0, 1, // Linha 2 
+    0, 0, 0, 1, 0, // Linha 3 
+    0, 0, 1, 0, 0, // Linha 4
+    0, 0, 0, 1, 0, // Linha 5
+    0, 0, 0, 0, 1, // Linha 6
+    0, 0, 0, 0, 1, // Linha 7
+    1, 0, 0, 0, 1, // Linha 8
+    0, 1, 1, 1, 0  // Linha 9
+  },
+
+  // -- DÃ­gito 4 --
+  // const bool number4[50]
+  {
+    0, 0, 0, 1, 0, // Linha 0
+    0, 0, 1, 1, 0, // linha 1
+    0, 1, 0, 1, 0, // Linha 2 
+    1, 0, 0, 1, 0, // Linha 3 
+    1, 1, 1, 1, 1,  // Linha 4
+    0, 0, 0, 1, 0, // Linha 5
+    0, 0, 0, 1, 0, // Linha 6
+    0, 0, 0, 1, 0, // Linha 7
+    0, 0, 0, 1, 0, // Linha 8
+    0, 0, 0, 1, 0  // Linha 9
+  },
+
+  // -- DÃ­gito 5 --
+  // const bool number5[50]
+  {
+    1, 1, 1, 1, 1, // Linha 0
+    1, 0, 0, 0, 0, // linha 1
+    1, 0, 0, 0, 0, // Linha 2 
+    1, 0, 0, 0, 0, // Linha 3 
+    1, 1, 1, 1, 0, // Linha 4
+    0, 0, 0, 0, 1, // Linha 5
+    0, 0, 0, 0, 1, // Linha 6
+    0, 0, 0, 0, 1, // Linha 7
+    1, 0, 0, 0, 1, // Linha 8
+    0, 1, 1, 1, 0  // Linha 9
+  },
+
+  // -- DÃ­gito 6 --
+  // const bool number6[50]
+  {
+    0, 1, 1, 1, 0, // Linha 0
+    1, 0, 0, 0, 1, // linha 1
+    1, 0, 0, 0, 0, // Linha 2 
+    1, 0, 0, 0, 0, // Linha 3 
+    1, 1, 1, 1, 0, // Linha 4
+    1, 0, 0, 0, 1, // Linha 5
+    1, 0, 0, 0, 1, // Linha 6
+    1, 0, 0, 0, 1, // Linha 7
+    1, 0, 0, 0, 1, // Linha 8
+    0, 1, 1, 1, 0  // Linha 9
+  },
+
+  // -- DÃ­gito 7 --
+  // const bool number7[50]
+  {
+    1, 1, 1, 1, 1, // Linha 0
+    0, 0, 0, 0, 1, // linha 1
+    0, 0, 0, 1, 0, // Linha 2 
+    0, 0, 0, 1, 0, // Linha 3 
+    0, 0, 0, 1, 0, // Linha 4
+    0, 0, 1, 0, 0, // Linha 5
+    0, 0, 1, 0, 0, // Linha 6
+    0, 0, 1, 0, 0, // Linha 7
+    0, 0, 1, 0, 0, // Linha 8
+    0, 0, 1, 0, 0  // Linha 9
+  },
+
+  // -- DÃ­gito 8 --
+  // const bool number8[50]
+  {
+    0, 1, 1, 1, 0, // Linha 0
+    1, 0, 0, 0, 1, // linha 1
+    1, 0, 0, 0, 1, // Linha 2 
+    1, 0, 0, 0, 1, // Linha 3 
+    0, 1, 1, 1, 0, // Linha 4
+    1, 0, 0, 0, 1, // Linha 5
+    1, 0, 0, 0, 1, // Linha 6
+    1, 0, 0, 0, 1, // Linha 7
+    1, 0, 0, 0, 1, // Linha 8
+    0, 1, 1, 1, 0  // Linha 9
+  },
+
+  // -- DÃ­gito 9 --
+  // const bool number9[50]
+  {
+    0, 1, 1, 1, 0, // Linha 0
+    1, 0, 0, 0, 1, // linha 1
+    1, 0, 0, 0, 1, // Linha 2 
+    1, 0, 0, 0, 1, // Linha 3 
+    0, 1, 1, 1, 1, // Linha 4
+    0, 0, 0, 0, 1, // Linha 5
+    0, 0, 0, 0, 1, // Linha 6
+    0, 0, 0, 0, 1, // Linha 7
+    1, 0, 0, 0, 1, // Linha 8
+    0, 1, 1, 1, 0  // Linha 9
+  }
+  };
+
+  const bool boxTeam256[256]  PROGMEM
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, //  Linha 0
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 1
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 2
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 3
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 4
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 5
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 6
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 7
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 8
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 9
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 10
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 11
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 12
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 13
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  Linha 14  
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1  //  Linha 15   
+  };
+
+  const bool boxTeam512 [512] PROGMEM =
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+  };
+  const bool initialText [1024] PROGMEM =
+  {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+  };
+  const bool boxTeam512teste [512] PROGMEM
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+  };
+
+  const bool vassoura[50] PROGMEM
+  {
+    0, 0, 0, 0, 0, // Linha 0
+    0, 0, 0, 0, 0, // linha 1
+    0, 0, 0, 0, 0, // Linha 2 
+    0, 0, 0, 0, 0, // Linha 3 
+    0, 0, 0, 0, 0, // Linha 4
+    0, 0, 0, 0, 0, // Linha 5
+    0, 0, 0, 0, 0, // Linha 6
+    0, 0, 0, 0, 0, // Linha 7
+    0, 0, 0, 0, 0, // Linha 8
+    0, 0, 0, 0, 0  // Linha 9
+  };
+
+  // =================================
+  // --- DefiniÃ§Ã£o das letras ---
+  const bool alfabeto[26][100] PROGMEM
+  {
+  // -- Letra 'A'  --
+  {
+    0, 0, 1, 1, 1, 1, 1, 1, 0, 0,
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1 
+  },
+  
+  // -- Letra 'B'  --
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 0, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 0, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 0, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 0, 0 
+  },
+  
+  // -- Letra 'C'  --
+  {
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 1, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    0, 1, 1, 1, 1, 1, 1, 1, 0, 0 
+  },
+
+  // -- Letra 'D'  --
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 0, 0 
+  },
+
+    // -- Letra 'E'  --
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+  },
+
+    // -- Letra 'F'  --
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0
+  },  
+
+    // -- Letra 'G'  --
+  {
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 1, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 1 
+  },  
+
+  // -- Letra 'H'  --
+  {
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1
+  },  
+
+    // -- Letra 'I'  --
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+  },  
+
+      // -- Letra 'J'  --
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 
+    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 
+    0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
+    1, 1, 0, 0, 0, 0, 1, 1, 0, 0,
+    1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 
+    1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 
+    1, 1, 1, 1, 1, 1, 1, 1, 0, 0,
+    0, 1, 1, 1, 1, 1, 1, 1, 0, 0
+  },  
+
+
+
+  // -- Letra 'K'  --
+  {
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 
+    1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 
+    1, 1, 1, 1, 1, 1, 1, 0, 0, 0,
+    1, 1, 1, 1, 1, 1, 1, 0, 0, 0,
+    1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 
+    1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 
+    1, 1, 0, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1
+  },
+
+
+  // -- Letra 'L'  --
+  {
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+  },
+
+    // -- Letra 'M'  --
+  {
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 1, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+    1, 1, 0, 1, 1, 1, 1, 0, 1, 1,
+    1, 1, 0, 0, 1, 1, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1
+  },
+
+    // -- Letra 'N'  --
+  {
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 1, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 
+    1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 
+    1, 1, 0, 1, 1, 1, 0, 0, 1, 1,
+    1, 1, 0, 0, 1, 1, 1, 0, 1, 1,
+    1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 
+    1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1
+  },
+  
+
+    // -- Letra 'O'  --
+  {
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 1, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    0, 1, 1, 1, 1, 1, 1, 1, 0, 0 
+  },
+
+    // -- Letra 'P'  --
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0
+  },
+
+    // -- Letra 'Q'  --
+  {
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 1, 1, 0, 1, 1,
+    1, 1, 0, 0, 0, 1, 1, 1, 1, 1,
+    1, 1, 1, 0, 0, 0, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 1 
+  },
+
+    // -- Letra 'R'  --
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 
+    1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 
+    1, 1, 0, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1
+  },
+
+  // -- Letra 'S'  --
+  {
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 0
+  },
+
+  // -- Letra 'T'  --
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0
+  },
+
+  // -- Letra 'U'  --
+  {
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 0
+  },
+
+  // -- Letra 'V'  --
+  {
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 
+    0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 
+    0, 1, 1, 1, 0, 0, 1, 1, 1, 0,
+    0, 0, 1, 1, 0, 0, 1, 1, 0, 0,
+    0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 
+    0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 
+    0, 0, 0, 1, 1, 1, 1, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0
+  },
+
+    // -- Letra 'W'  --
+  {
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 
+    1, 1, 0, 0, 1, 1, 0, 0, 1, 1,
+    1, 1, 0, 1, 1, 1, 1, 0, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+    1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 
+    1, 1, 1, 0, 0, 0, 0, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1
+  },
+
+      // -- Letra 'X'  --
+  {
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 
+    0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0,
+    0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 
+    0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1
+  },
+
+  // -- Letra 'Y'  --
+  {
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 1, 0, 0, 0, 0, 1, 1, 1,
+    0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 
+    0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 
+    0, 0, 0, 1, 1, 1, 1, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0
+  },
+
+    // -- Letra 'Z'  --
+  {
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 
+    0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 
+    0, 0, 0, 0, 1, 1, 1, 0, 0, 0,
+    0, 0, 0, 1, 1, 1, 0, 0, 0, 0,
+    0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 
+    0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+  }
+  };
+
+
+
+#endif //drawing_h
+
+==================================================
+ARQUIVO: LedMatrix.cpp
+==================================================
+#include "LedMatrix.h"
+#include "../Hardware/Hal.h" 
+#include "Drawing.h"         
+
+uint64_t ledPanelRgb[2][96]; // MemÃ³ria dobrada (32 linhas * 3 cores)
+
+void Display_PutPixel(int x, int y, int color) { 
+    if (x < 0 || x > 127 || y < 0 || y > 31) return; 
+
+    uint64_t unidade = 1;
+    uint64_t tempar = 63 - (x % 64);
+    int multiplier = 0;
+    
+    switch (color) {
+        case red:
+            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
+        case green:
+            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
+        case blue:
+            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
+        case yellow:
+            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
+        case cyan:
+            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
+        case purple:
+            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
+        case white:
+            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
+    }
+}
+
+void Display_ClearPixel(int x, int y, int color) {
+    if (x < 0 || x > 127 || y < 0 || y > 31) return;
+
+    uint64_t unidade = 1;
+    uint64_t tempar = 63 - (x % 64);
+    int multiplier = 0;
+    
+    switch (color) {
+        case red:
+            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar)); break;
+        case green:
+            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar)); break;
+        case blue:
+            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar)); break;
+        case white:
+            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
+            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
+            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar)); break;
+    }
+}
+
+void Display_Clear() {
+    // Adeus, fantasmas! O memset "zera" toda a matriz de vÃ­deo instantaneamente.
+    memset(ledPanelRgb, 0, sizeof(ledPanelRgb));
+}
+
+void Display_Init() {
+    Display_Clear();
+    for (int i = 0; i < 32; i++) {
+        Display_PutPixel(0, i, white);
+        Display_PutPixel(127, i, white);
+        Display_PutPixel(63, i, white);
+        Display_PutPixel(64, i, white);
+    }
+    for (int i = 0; i < 64; i++) {
+        Display_PutPixel(i, 0, white);
+        Display_PutPixel(64 + i, 31, white); 
+    }
+}
+
+void Display_TestPattern(int offset_x) {
+    Display_Clear(); 
+
+    // Desenha na fileira de CIMA (Que estÃ¡ de cabeÃ§a para baixo fisicamente)
+    Display_DrawChar('C', offset_x + 0, 3, red);
+    Display_DrawChar('A', offset_x + 11, 3, red);
+    Display_DrawChar('S', offset_x + 22, 3, red);
+    Display_DrawChar('A', offset_x + 33, 3, red);
+
+    // Desenha na fileira de BAIXO (Que estÃ¡ na posiÃ§Ã£o normal fisicamente)
+    Display_DrawChar('B', offset_x + 0, 19, red);
+    Display_DrawChar('A', offset_x + 11, 19, red);
+    Display_DrawChar('S', offset_x + 22, 19, red);
+    Display_DrawChar('E', offset_x + 33, 19, red);
+}
+
+void Display_DrawChar(char c, int x, int y, int color) {
+    int letra = c - 'A'; 
+    if (letra < 0 || letra > 25) return;
+    
+    for (size_t i = 0; i < 10; i++) {
+        for (size_t j = 0; j < 10; j++) {
+            if (pgm_read_byte(&(alfabeto[letra][10 * i + j]))) {
+                Display_PutPixel(j + x, i + y, color);
+            }
+        }
+    }
+}
+
+void Display_DrawDigit(int numero, int x, int y, int color) {
+    if(numero < 0 || numero > 9) return;
+    
+    for (size_t i = 0; i < 10; i++) {
+        for (size_t j = 0; j < 5; j++) {
+            if (pgm_read_byte(&(digitosAlg[numero][5 * i + j]))) {
+                Display_PutPixel(j + x, i + y, color);
+            }
+        }
+    }
+}
+
+void Display_ClearCharArea(int x, int y, int color) {
+    for (size_t i = 0; i < 10; i++) {
+        for (size_t j = 0; j < 5; j++) {
+            Display_ClearPixel(j + x, i + y, color);
+        }
+    }
+}
+
+// ======================================================================
+// VARREDURA SPI CASCATA 128x32
+// ======================================================================
+// ======================================================================
+// VARREDURA SPI CASCATA 128x32 (TOPOLOGIA EM "SERPENTE")
+// Topo: De cabeÃ§a para baixo | Base: Normal
+// Fim da Linha (Push 1): Base-Direita (Painel 16)
+// ======================================================================
+void Display_Update() {
+    HAL_DisableLines(); 
+
+    // ====================================================
+    // --- LINHAS PARES FÃSICAS (A=1, B=0) ---
+    // ====================================================
+    for (int cores = 2; cores >= 0; cores--) {
+        
+        // 1. BASE-DIREITA (Normal, painel 0, Y: 16..31)
+        for (int displayID = 0; displayID <= 3; displayID++) {
+            for (int linhas = 16 + cores * 32; linhas <= 30 + cores * 32; linhas += 2) {
+                HAL_SpiTransferNormal((ledPanelRgb[0][linhas] >> (16 * displayID)));
+            }
+        }
+
+        // 2. BASE-ESQUERDA (Normal, painel 1, Y: 16..31)
+        for (int displayID = 0; displayID <= 3; displayID++) {
+            for (int linhas = 16 + cores * 32; linhas <= 30 + cores * 32; linhas += 2) {
+                HAL_SpiTransferNormal((ledPanelRgb[1][linhas] >> (16 * displayID)));
+            }
+        }
+
+        // 3. TOPO-ESQUERDA (Invertido, painel 1, Y: 0..15)
+        // Como o painel estÃ¡ de cabeÃ§a para baixo, as linhas pares fÃ­sicas mapeiam as linhas ÃMPARES da imagem (de trÃ¡s pra frente)
+        for (int displayID = 3; displayID >= 0; displayID--) {
+            for (int linhas = 15 + cores * 32; linhas >= 1 + cores * 32; linhas -= 2) {
+                HAL_SpiTransferInverted((ledPanelRgb[1][linhas] >> (16 * displayID)));
+            }
+        }
+
+        // 4. TOPO-DIREITA (Invertido, painel 0, Y: 0..15)
+        for (int displayID = 3; displayID >= 0; displayID--) {
+            for (int linhas = 15 + cores * 32; linhas >= 1 + cores * 32; linhas -= 2) {
+                HAL_SpiTransferInverted((ledPanelRgb[0][linhas] >> (16 * displayID)));
+            }
+        }
+    }
+    HAL_LatchPanel();
+    HAL_SetLinesPar();
+    HAL_EnableDisplay();
+    delay(1); 
+    HAL_DisableLines();
+
+    // ====================================================
+    // --- LINHAS ÃMPARES FÃSICAS (A=0, B=1) ---
+    // ====================================================
+    for (int cores = 2; cores >= 0; cores--) {
+        
+        // 1. BASE-DIREITA (Normal, painel 0, Y: 16..31)
+        for (int displayID = 0; displayID <= 3; displayID++) {
+            for (int linhas = 17 + cores * 32; linhas <= 31 + cores * 32; linhas += 2) {
+                HAL_SpiTransferNormal((ledPanelRgb[0][linhas] >> (16 * displayID)));
+            }
+        }
+
+        // 2. BASE-ESQUERDA (Normal, painel 1, Y: 16..31)
+        for (int displayID = 0; displayID <= 3; displayID++) {
+            for (int linhas = 17 + cores * 32; linhas <= 31 + cores * 32; linhas += 2) {
+                HAL_SpiTransferNormal((ledPanelRgb[1][linhas] >> (16 * displayID)));
+            }
+        }
+
+        // 3. TOPO-ESQUERDA (Invertido, painel 1, Y: 0..15)
+        // Linhas Ã­mpares fÃ­sicas mapeiam as linhas PARES da imagem (de trÃ¡s pra frente)
+        for (int displayID = 3; displayID >= 0; displayID--) {
+            for (int linhas = 14 + cores * 32; linhas >= 0 + cores * 32; linhas -= 2) {
+                HAL_SpiTransferInverted((ledPanelRgb[1][linhas] >> (16 * displayID)));
+            }
+        }
+
+        // 4. TOPO-DIREITA (Invertido, painel 0, Y: 0..15)
+        for (int displayID = 3; displayID >= 0; displayID--) {
+            for (int linhas = 14 + cores * 32; linhas >= 0 + cores * 32; linhas -= 2) {
+                HAL_SpiTransferInverted((ledPanelRgb[0][linhas] >> (16 * displayID)));
+            }
+        }
+    }
+    HAL_LatchPanel();
+    HAL_SetLinesImpar();
+    HAL_EnableDisplay();
+    delay(1); 
+}
+
+==================================================
+ARQUIVO: LedMatrix.h
+==================================================
+#pragma once
+#include <Arduino.h>
+
+enum Colors { red, blue, green, yellow, cyan, purple, white };
+
+void Display_Init();                       
+void Display_Update();
+void Display_Clear();
+
+void Display_PutPixel(int x, int y, int color);
+void Display_ClearPixel(int x, int y, int color);
+
+void Display_DrawChar(char c, int x, int y, int color);
+void Display_DrawDigit(int numero, int x, int y, int color);
+void Display_ClearCharArea(int x, int y, int color);
+
+void Display_TestPattern(); // <-- Modo de teste de Cascata
+void Display_TestPattern(int offset_x); // <-- Adicione o parÃ¢metro int
+
+==================================================
+ARQUIVO: ScoreBoard.cpp
+==================================================
+#include "Scoreboard.h"
+#include "../Display/LedMatrix.h" 
+#include <Arduino.h>
+#include <EEPROM.h>
+
+static int teamsScore[4] = {0, 0, 0, 0};
+
+void Scoreboard_Init() {
+    for (int i = 0; i < 4; i++) {
+        EEPROM.get(i * sizeof(int), teamsScore[i]);
+        if (teamsScore[i] < 0 || teamsScore[i] > 9999) {
+            teamsScore[i] = 0;
+        }
+    }
+}
+
+void Scoreboard_Save() {
+    for (int i = 0; i < 4; i++) {
+        EEPROM.put(i * sizeof(int), teamsScore[i]);
+    }
+    EEPROM.commit(); 
+}
+
+void Scoreboard_Clear() {
+    for (int i = 0; i < 4; i++) {
+        teamsScore[i] = 0;
+    }
+    Scoreboard_Save();
+}
+
+void Scoreboard_AddPoints(int cmd) {
+    int timeID = cmd / 3;
+    int pontosGanhos = ((cmd % 3) + 1) * 50; 
+    teamsScore[timeID] += pontosGanhos;
+    if (teamsScore[timeID] > 999) teamsScore[timeID] = 999;
+}
+
+void Scoreboard_SubPoints(int cmd) {
+    int timeID = cmd / 3;
+    int pontosPerdidos = ((cmd % 3) + 1) * 50; 
+    teamsScore[timeID] -= pontosPerdidos;
+    if (teamsScore[timeID] < 0) teamsScore[timeID] = 0;
+}
+
+// RenderizaÃ§Ã£o Fixa para os 4 times (128x32)
+void Scoreboard_DrawBoxes() {
+    // Caixas Cima
+    for (int i = 0; i < 30; i++) {
+        Display_PutPixel(65 + i, 1, cyan);
+        Display_PutPixel(65 + i, 14, cyan);
+        Display_PutPixel(97 + i, 1, cyan);
+        Display_PutPixel(97 + i, 14, cyan);
+    }
+    // Caixas Baixo
+    for (int i = 0; i < 30; i++) {
+        Display_PutPixel(65 + i, 17, cyan);
+        Display_PutPixel(65 + i, 30, cyan);
+        Display_PutPixel(97 + i, 17, cyan);
+        Display_PutPixel(97 + i, 30, cyan);
+    }
+}
+
+void Scoreboard_DrawTeams() {
+    int y_cima = 3;
+    Display_DrawChar('B', 0,  y_cima, red);
+    Display_DrawChar('U', 11, y_cima, red);
+    Display_DrawChar('S', 22, y_cima, red);
+
+    Display_DrawChar('L', 34, y_cima, blue);
+    Display_DrawChar('A', 45, y_cima, blue);
+    Display_DrawChar('N', 56, y_cima, blue);
+
+    int y_baixo = 19;
+    Display_DrawChar('W', 0,  y_baixo, yellow);
+    Display_DrawChar('O', 11, y_baixo, yellow);
+    Display_DrawChar('O', 22, y_baixo, yellow);
+
+    Display_DrawChar('R', 34, y_baixo, green);
+    Display_DrawChar('A', 45, y_baixo, green);
+    Display_DrawChar('I', 56, y_baixo, green);
+}
+
+void renderNumberInBox(int score, int startX, int y, int color) {
+    int centenas = score / 100;
+    int dezenas  = (score % 100) / 10;
+    int unidades = score % 10;
+    
+    if (score >= 100) {
+        Display_DrawDigit(centenas, startX, y, color);
+        Display_DrawDigit(dezenas,  startX + 8, y, color);
+        Display_DrawDigit(unidades, startX + 16, y, color);
+    } else if (score >= 10) {
+        Display_DrawDigit(dezenas,  startX + 4, y, color);
+        Display_DrawDigit(unidades, startX + 12, y, color);
+    } else {
+        Display_DrawDigit(unidades, startX + 8, y, color);
+    }
+}
+
+void Scoreboard_DrawScores() {
+    renderNumberInBox(teamsScore[0], 69, 4, white);
+    renderNumberInBox(teamsScore[1], 101, 4, white);
+    renderNumberInBox(teamsScore[2], 69, 20, white);
+    renderNumberInBox(teamsScore[3], 101, 20, white);
+}
+
+==================================================
+ARQUIVO: Scoreboard.h
+==================================================
+#pragma once
+
+void Scoreboard_Init();          
+void Scoreboard_Save();          
+void Scoreboard_Clear();
+void Scoreboard_AddPoints(int cmd); 
+void Scoreboard_SubPoints(int cmd);
+
+void Scoreboard_DrawTeams();
+void Scoreboard_DrawBoxes();
+void Scoreboard_DrawScores();
+
+==================================================
+ARQUIVO: Hal.cpp
+==================================================
+#include "Hal.h"
+#include "../include/Config.h"
+
+void HAL_Init() {
+    pinMode(PIN_A, OUTPUT);
+    pinMode(PIN_B, OUTPUT);
+    pinMode(PIN_LAT, OUTPUT);
+    pinMode(PIN_OE, OUTPUT);
+    pinMode(PIN_CLK, OUTPUT);
+    pinMode(PIN_DATA, OUTPUT);
+    
+    EEPROM.begin(512);
+    SPI.begin(PIN_CLK, -1, PIN_DATA, -1);
+}
+
+int HAL_PingHardware() {
+    pinMode(PIN_DATA, OUTPUT);
+    pinMode(PIN_CLK, OUTPUT);
+    pinMode(PIN_OE, OUTPUT);
+    pinMode(PIN_RETORNO, INPUT_PULLDOWN);
+
+    digitalWrite(PIN_OE, HIGH); 
+    digitalWrite(PIN_CLK, LOW);
+    
+    digitalWrite(PIN_DATA, LOW);
+    for(int i = 0; i < 20000; i++) {
+        digitalWrite(PIN_CLK, HIGH); digitalWrite(PIN_CLK, LOW);
+    }
+
+    digitalWrite(PIN_DATA, HIGH);
+    digitalWrite(PIN_CLK, HIGH); digitalWrite(PIN_CLK, LOW);
+    digitalWrite(PIN_DATA, LOW);
+    
+    int contador_de_bits = 1;
+    while(digitalRead(PIN_RETORNO) == LOW && contador_de_bits < 20000) {
+        digitalWrite(PIN_CLK, HIGH); digitalWrite(PIN_CLK, LOW);
+        contador_de_bits++;
+    }
+
+    SPI.end();
+    SPI.begin(PIN_CLK, -1, PIN_DATA, -1);
+    return contador_de_bits;
+}
+
+void HAL_SpiTransferNormal(uint16_t data) {
+    // Reduzimos a velocidade de 4000000 para 500000 para evitar reflexÃ£o!
+    SPI.beginTransaction(SPISettings(4000000, LSBFIRST, SPI_MODE0)); 
+    SPI.transfer16(data);
+    SPI.endTransaction();
+}
+
+void HAL_SpiTransferInverted(uint16_t data) {
+    // Reduzimos a velocidade de 4000000 para 500000 para evitar reflexÃ£o!
+    SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+    SPI.transfer16(data);
+    SPI.endTransaction();
+}
+
+void HAL_LatchPanel() {
+    digitalWrite(PIN_LAT, HIGH);
+    digitalWrite(PIN_LAT, LOW);
+}
+
+void HAL_SetLinesPar() {
+    digitalWrite(PIN_A, HIGH);
+    digitalWrite(PIN_B, LOW);
+}
+
+void HAL_SetLinesImpar() {
+    digitalWrite(PIN_B, HIGH);
+    digitalWrite(PIN_A, LOW);
+}
+
+void HAL_DisableLines() {
+    digitalWrite(PIN_A, HIGH);
+    digitalWrite(PIN_B, HIGH);
+    digitalWrite(PIN_OE, HIGH); 
+}
+
+void HAL_EnableDisplay() {
+    digitalWrite(PIN_OE, LOW); // Acende a tela (LÃ³gica invertida)
+}
+
+==================================================
+ARQUIVO: Hal.h
+==================================================
+#pragma once
+#include <Arduino.h>
+#include <SPI.h>
+#include <EEPROM.h>
+
+void HAL_Init();                     
+int  HAL_PingHardware();
+
+// FunÃ§Ãµes de varredura do Painel
+void HAL_SpiTransferNormal(uint16_t data);
+void HAL_SpiTransferInverted(uint16_t data);
+void HAL_LatchPanel();
+void HAL_SetLinesPar();
+void HAL_SetLinesImpar();
+void HAL_DisableLines();
+void HAL_EnableDisplay(); // <-- Nova funÃ§Ã£o do brilho
+
+==================================================
+ARQUIVO: main.cpp
+==================================================
+#include <Arduino.h>
+#include "../include/Config.h"
+#include "Hardware/Hal.h"
+#include "Display/LedMatrix.h"
+#include "Comms/Communication.h"
+#include "Comms/WebServer.h"
+#include "Game/Scoreboard.h"
+
+enum stateMachine
+{
+    test_hardware,
+    start,
+    idle
+};
+uint8_t panelPlayerState = test_hardware;
+
+enum comandos
+{
+    Ir_Para_Idle = 0,
+    Cmd_AddPonto_Inicio = 1,
+    Cmd_AddPonto_Fim = 12,
+    Cmd_SubPonto_Inicio = 13,
+    Cmd_SubPonto_Fim = 24,
+    ZERA_O_PLACAR = 25,
+    GUARDA_O_PLACAR = 26
+};
+
+// --- ADICIONE ESTAS DUAS VARIÃVEIS GLOBAIS LÃ EM CIMA (antes do setup) ---
+int test_x_offset = -40;
+unsigned long lastScrollTime = 0;
+
+void setup()
+{
+    Comm_Init();
+    HAL_Init();
+
+    Display_Clear();
+    DEBUG_PRINTLN("=== Modo de Teste de Hardware Iniciado ===");
+
+    WebServer_Init(); // Pode inicializar o Wi-Fi sem problemas
+}
+
+void loop()
+{
+    int comandoRecebido = Comm_GetCommand();
+    if (comandoRecebido == -1)
+    {
+        comandoRecebido = WebServer_GetCommand();
+    }
+
+    switch (panelPlayerState)
+    {
+    case test_hardware:
+        // A cada 80ms, move o texto 1 pixel para a direita
+        if (millis() - lastScrollTime > 80)
+        {
+            test_x_offset++;
+            if (test_x_offset > 128)
+            {
+                test_x_offset = -40; // Volta pro comeÃ§o
+            }
+
+            Display_TestPattern(test_x_offset);
+            lastScrollTime = millis();
+        }
+
+    case start:
+        if (comandoRecebido == Ir_Para_Idle)
+        {
+            DEBUG_PRINTLN("[START] Comando 0 Recebido. Saindo do teste e indo pro Jogo!");
+
+            Scoreboard_Init();
+            Display_Clear();
+            Scoreboard_DrawTeams();
+            Scoreboard_DrawBoxes();
+            Scoreboard_DrawScores();
+
+            panelPlayerState = idle;
+        }
+        break;
+
+    case idle:
+        bool pontuacaoAlterada = false;
+
+        if (comandoRecebido >= Cmd_AddPonto_Inicio && comandoRecebido <= Cmd_AddPonto_Fim)
+        {
+            Scoreboard_AddPoints(comandoRecebido - 1);
+            pontuacaoAlterada = true;
+        }
+        else if (comandoRecebido >= Cmd_SubPonto_Inicio && comandoRecebido <= Cmd_SubPonto_Fim)
+        {
+            Scoreboard_SubPoints(comandoRecebido - 13);
+            pontuacaoAlterada = true;
+        }
+        else if (comandoRecebido == ZERA_O_PLACAR)
+        {
+            Scoreboard_Clear();
+            pontuacaoAlterada = true;
+        }
+        else if (comandoRecebido == GUARDA_O_PLACAR)
+        {
+            Scoreboard_Save();
+            DEBUG_PRINTLN(">>> Placar Salvo na Memoria!");
+        }
+        else if (comandoRecebido == Ir_Para_Idle)
+        {
+            ESP.restart();
+        }
+
+        if (pontuacaoAlterada)
+        {
+            Display_Clear();
+            Scoreboard_DrawTeams();
+            Scoreboard_DrawBoxes();
+            Scoreboard_DrawScores();
+        }
+        break;
+    }
+
+    Display_Update();
+}
+
+==================================================
+ARQUIVO: Config.h
+==================================================
+#pragma once
+#include <Arduino.h>
+
+// ======================================================================
+// CONFIGURAÃ‡Ã•ES GLOBAIS E PINOS (ESP32-C3)
+// ======================================================================
+
+// Pinos do Painel de LED (SPI e Controle)
+constexpr int PIN_LAT   = 0;
+constexpr int PIN_OE    = 1;
+constexpr int PIN_B     = 3;
+constexpr int PIN_A     = 4;
+constexpr int PIN_CLK   = 6;
+constexpr int PIN_DATA  = 7;
+
+// Pino do Sonar (Auto-detecÃ§Ã£o de tamanho do painel)
+constexpr int PIN_RETORNO = 2;
+
+// Pinos de ComunicaÃ§Ã£o Serial (MÃ³dulo Bluetooth HC-05)
+constexpr int RX_PIN = 20;
+constexpr int TX_PIN = 21;
+
+// ConfiguraÃ§Ãµes do Jogo
+constexpr long INTERVALO_EXIBICAO = 3000; // Tempo de alternÃ¢ncia de tela em ms
+
+// Sistema de Debug (Defina como 0 para calar o terminal e ganhar performance)
+#define DEBUG_MODE 1  
+
+#if DEBUG_MODE
+  #define DEBUG_PRINT(x)    Serial.print(x)
+  #define DEBUG_PRINTLN(x)  Serial.println(x)
+  #define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
+#else
+  #define DEBUG_PRINT(x)
+  #define DEBUG_PRINTLN(x)
+  #define DEBUG_PRINTF(...)
+#endif
+
+==================================================
+ARQUIVO: Debug.h
+==================================================
+#ifndef DEBUG_H
+#define DEBUG_H
+
+#define DEBUG_MODE 1  // Altere para 0 para desligar todos os prints
+
+#if DEBUG_MODE
+  #define DEBUG_PRINT(x)   Serial.print(x)
+  #define DEBUG_PRINTLN(x) Serial.println(x)
+  #define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
+#else
+  #define DEBUG_PRINT(x)
+  #define DEBUG_PRINTLN(x)
+  #define DEBUG_PRINTF(...)
+#endif
+
+#endif
+
