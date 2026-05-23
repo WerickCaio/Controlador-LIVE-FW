@@ -66,6 +66,24 @@ void setup()
     DEBUG_PRINTLN("[Setup] Modo: TESTE_HARDWARE. Aguardando cmd 0...");
 }
 
+void Debug_PixelMapper(int cmd)
+{
+    // cmd 300-999: acende o pixel de índice (cmd-300) varrendo linha por linha
+    // Ex: cmd=300 → pixel (x=0,y=0) | cmd=301 → pixel (x=1,y=0) | cmd=332 → pixel (x=4,y=1)
+    if (cmd < 300 || cmd > 300 + 128 * 32)
+        return;
+
+    int idx = cmd - 300;
+    int x = idx % 128;
+    int y = idx / 128;
+
+    Display_Clear();
+    Display_PutPixel(x, y, white);
+
+    DEBUG_PRINTF("[MAP] idx=%d  logico=(x=%d, y=%d)\n", idx, x, y);
+    DEBUG_PRINTLN("[MAP] Qual linha e coluna FISICA acendeu?");
+}
+
 // ======================================================================
 //  LOOP
 // ======================================================================
@@ -176,6 +194,10 @@ void loop()
             Display_PutPixel(127, 31, white);
             delay(500);
             Display_Update();
+        }
+        else if (cmd >= 300 && cmd <= 4396)
+        {
+            Debug_PixelMapper(cmd);
         }
 
         if (atualizar)
