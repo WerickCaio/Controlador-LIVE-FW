@@ -1,190 +1,346 @@
 ﻿
-==================================================
-ARQUIVO: platformio.ini
-==================================================
-; PlatformIO Project Configuration File
-;
-;   Build options: build flags, source filter
-;   Upload options: custom upload port, speed and extra flags
-;   Library options: dependencies, extra library storages
-;   Advanced options: extra scripting
-;
-; Please visit documentation for the other options and examples
-; https://docs.platformio.org/page/projectconf.html
 
-[env:esp32-c3-supermini]
-platform = espressif32
-board = esp32-c3-devkitm-1
-framework = arduino
-monitor_speed = 115200
-build_flags = 
-    -D ARDUINO_USB_MODE=1
-    -D ARDUINO_USB_CDC_ON_BOOT=1
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\include\Config.h
+========================================
 
-
-==================================================
-ARQUIVO: Communication.cpp
-==================================================
-#include "Communication.h"
-#include "../include/Config.h" // Corrigido o caminho para a pasta include
+#pragma once
 #include <Arduino.h>
+
+// ======================================================================
+//  CONFIGURAÃ‡ÃƒO CENTRAL DO PLACAR
+//  Altere aqui para mudar o nÃºmero de times, nomes e cores.
+// ======================================================================
+
+// --- NÃºmero de times (2, 3 ou 4) ---
+#define NUM_TEAMS 4
+
+// --- Cores disponÃ­veis (use essas constantes em TIMES[]) ---
+#define COR_VERMELHO  0   // red
+#define COR_AZUL      1   // blue
+#define COR_VERDE     2   // green
+#define COR_AMARELO   3   // yellow
+#define COR_CIANO     4   // cyan
+#define COR_ROXO      5   // purple
+#define COR_BRANCO    6   // white
+
+// --- Estrutura de configuraÃ§Ã£o de cada time ---
+struct TeamConfig {
+    char name[4];  // AtÃ© 3 letras + '\0'  (ex: "BUS", "TM1")
+    int  color;    // Use as constantes COR_* acima
+};
+
+// DeclaraÃ§Ã£o extern â€” a definiÃ§Ã£o fica em src/Game/TeamsConfig.cpp
+extern const TeamConfig TIMES[NUM_TEAMS];
+
+// ======================================================================
+//  PINOS â€” ESP32-C3 Super Mini
+// ======================================================================
+constexpr int PIN_LAT      = 0;
+constexpr int PIN_OE       = 1;
+constexpr int PIN_B        = 3;
+constexpr int PIN_A        = 4;
+constexpr int PIN_CLK      = 6;
+constexpr int PIN_DATA     = 7;
+constexpr int PIN_RETORNO  = 2;   // Auto-detecÃ§Ã£o de tamanho do painel
+
+// Pinos Serial para Bluetooth ClÃ¡ssico (HC-05)
+// âš ï¸ ATENÃ‡ÃƒO: O ESP32-C3 SÃ“ TEM BLE â€” o HC-05 (Classic) NÃƒO Ã‰ COMPATÃVEL.
+//    Para usar o HC-05, troque para o ESP32 DevKit clÃ¡ssico.
+constexpr int RX_PIN = 20;
+constexpr int TX_PIN = 21;
+
+// ======================================================================
+//  DEBUG
+// ======================================================================
+#define DEBUG_MODE 1   // Mude para 0 em produÃ§Ã£o para ganhar performance
+
+#if DEBUG_MODE
+  #define DEBUG_PRINT(x)    Serial.print(x)
+  #define DEBUG_PRINTLN(x)  Serial.println(x)
+  #define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
+#else
+  #define DEBUG_PRINT(x)
+  #define DEBUG_PRINTLN(x)
+  #define DEBUG_PRINTF(...)
+#endif
+
+
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\include\Debug.h
+========================================
+
+#ifndef DEBUG_H
+#define DEBUG_H
+
+#define DEBUG_MODE 1  // Altere para 0 para desligar todos os prints
+
+#if DEBUG_MODE
+  #define DEBUG_PRINT(x)   Serial.print(x)
+  #define DEBUG_PRINTLN(x) Serial.println(x)
+  #define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
+#else
+  #define DEBUG_PRINT(x)
+  #define DEBUG_PRINTLN(x)
+  #define DEBUG_PRINTF(...)
+#endif
+
+#endif
+
+
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\Comms\Communication.cpp
+========================================
+
+#include "Communication.h"
+#include "../../include/Config.h"
+#include <Arduino.h>
+
+// ======================================================================
+//  COMUNICAÃ‡ÃƒO SERIAL
+//
+//  Protocolo de comandos (envie via monitor serial ou app BT):
+//    0             â†’ Iniciar jogo / reiniciar
+//    1..NUM_TEAMS  â†’ +50 pts ao time (teamID = cmd - 1)
+//  101..100+N      â†’ -50 pts do time (teamID = cmd - 101)
+//  200             â†’ Zerar placar
+//  201             â†’ Salvar placar na EEPROM
+//
+//  Envie o nÃºmero seguido de '\n' (Enter). Ex: "2\n" â†’ +50 ao time 2.
+// ======================================================================
 
 void Comm_Init() {
     Serial.begin(115200);
-    // Serial1.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN); // Descomente se usar o HC-05
     Serial.setTimeout(20);
+
+    // â”€â”€ Bluetooth ClÃ¡ssico (HC-05) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // âš ï¸  O ESP32-C3 tem apenas BLE â€” HC-05 (Bluetooth ClÃ¡ssico) Ã© INCOMPATÃVEL.
+    //    Para usar HC-05, troque para o ESP32 DevKit clÃ¡ssico e descomente abaixo:
+    //
+    // Serial1.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
     // Serial1.setTimeout(20);
 }
 
 int Comm_GetCommand() {
-    String entrada = "";
-    
-    // 1. Checa a porta Serial do Cabo USB
+    // 1. USB Serial (cabo)
     if (Serial.available() > 0) {
-        entrada = Serial.readStringUntil('\n');
-        entrada.trim(); 
-        
-        if (entrada.length() == 0) return -1; 
-        
-        int comando = entrada.toInt();
-        
-        if (comando == 0 && entrada != "0") {
-            DEBUG_PRINTLN("[AVISO] Comando Desconhecido (USB)");
-            return -1;
-        }
-        return comando;
-    }
-
-    // 2. Checa o MÃ³dulo Bluetooth (Se estiver usando)
-    /*
-    if (Serial1.available() > 0) {
-        entrada = Serial1.readStringUntil('\n');
+        String entrada = Serial.readStringUntil('\n');
         entrada.trim();
         if (entrada.length() == 0) return -1;
-        
-        int comando = entrada.toInt();
-        if (comando == 0 && entrada != "0") {
-            DEBUG_PRINTLN("[AVISO] Comando Desconhecido (BT)");
+
+        int cmd = entrada.toInt();
+        if (cmd == 0 && entrada != "0") {
+            DEBUG_PRINTLN("[Serial] Comando desconhecido ignorado.");
             return -1;
         }
-        return comando;
+        DEBUG_PRINTF("[Serial] Comando recebido: %d\n", cmd);
+        return cmd;
+    }
+
+    // 2. Bluetooth ClÃ¡ssico â€” descomente se usar Serial1:
+    /*
+    if (Serial1.available() > 0) {
+        String entrada = Serial1.readStringUntil('\n');
+        entrada.trim();
+        if (entrada.length() == 0) return -1;
+        int cmd = entrada.toInt();
+        if (cmd == 0 && entrada != "0") return -1;
+        return cmd;
     }
     */
 
-    return -1; // Nenhum comando recebido
+    return -1;
 }
 
-==================================================
-ARQUIVO: Communication.h
-==================================================
+
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\Comms\Communication.h
+========================================
+
 #pragma once
 
+// Inicializa a comunicaÃ§Ã£o serial (USB e, se habilitado, Bluetooth).
 void Comm_Init();
+
+// Retorna o prÃ³ximo comando recebido, ou -1 se nenhum.
 int  Comm_GetCommand();
 
-==================================================
-ARQUIVO: WebServer.cpp
-==================================================
-#include "WebServer.h"
+
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\Comms\PanelServer.cpp
+========================================
+
+#include "PanelServer.h"
+#include "../../include/Config.h"
 #include <WiFi.h>
-#include <WebServer.h>
+#include <WebServer.h>   // Biblioteca do Arduino/ESP32 (sem conflito agora)
 
-// Instancia o servidor na porta 80 (padrÃ£o de navegadores)
-WebServer server(80);
+// â”€â”€ InstÃ¢ncias â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+static WebServer server(80);
+static int comandoAtual = -1;
 
-// VariÃ¡vel para guardar o comando atÃ© o loop principal buscar
-int comandoAtual = -1;
+// â”€â”€ Credenciais do Access Point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Altere ssid e password conforme necessÃ¡rio.
+// Deixe password = "" para rede aberta (mais fÃ¡cil para testes).
+static const char* ssid     = "Placar_Escolar";
+static const char* password = "";
 
-// Nome da rede Wi-Fi que o placar vai criar
-const char* ssid = "Placar_C3";
-const char* password = ""; // Deixe vazio para rede aberta nos testes
+// ======================================================================
+//  PROTOCOLO DE COMANDOS
+//
+//    0             â†’ Iniciar jogo / reiniciar
+//    1..NUM_TEAMS  â†’ +50 pts ao time (teamID = cmd - 1)
+//  101..100+N      â†’ -50 pts do time (teamID = cmd - 101)
+//  200             â†’ Zerar placar
+//  201             â†’ Salvar placar na EEPROM
+// ======================================================================
 
-// =========================================================
-// PÃGINA HTML DO APLICATIVO
-// =========================================================
-void handleRoot() {
-    String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
-    html += "<style>";
-    html += "body { font-family: Arial; text-align: center; background-color: #222; color: white; margin-top: 20px; }";
-    html += "button { width: 45%; padding: 15px; margin: 5px; font-size: 18px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; }";
-    html += ".btn-start { background-color: #4CAF50; color: white; width: 93%; }";
-    html += ".btn-red { background-color: #e74c3c; color: white; }";
-    html += ".btn-blue { background-color: #3498db; color: white; }";
-    html += ".btn-yellow { background-color: #f1c40f; color: black; }";
-    html += ".btn-green { background-color: #2ecc71; color: white; }";
-    html += ".btn-zero { background-color: #e67e22; color: white; width: 93%; }";
-    html += "a { text-decoration: none; }";
-    html += "</style></head><body>";
-    
-    html += "<h2>CONTROLE DO PLACAR</h2>";
-    
-    // Comando 0: Sair do teste e iniciar o jogo
-    html += "<a href=\"/cmd?id=0\"><button class='btn-start'>INICIAR JOGO</button></a><br><br>";
+// Mapeia a constante de cor interna para a classe CSS correspondente
+static const char* colorToCss(int color) {
+    switch (color) {
+        case COR_VERMELHO: return "btn-red";
+        case COR_AZUL:     return "btn-blue";
+        case COR_VERDE:    return "btn-green";
+        case COR_AMARELO:  return "btn-yellow";
+        case COR_CIANO:    return "btn-cyan";
+        case COR_ROXO:     return "btn-purple";
+        default:           return "btn-white";
+    }
+}
 
-    html += "<h3>Adicionar Pontos (+50)</h3>";
-    html += "<a href=\"/cmd?id=1\"><button class='btn-red'>Time BUS</button></a>";     // Cmd 1 (Time 0)
-    html += "<a href=\"/cmd?id=4\"><button class='btn-blue'>Time LAN</button></a><br>"; // Cmd 4 (Time 1)
-    
-    html += "<a href=\"/cmd?id=7\"><button class='btn-yellow'>Time WOO</button></a>";   // Cmd 7 (Time 2)
-    html += "<a href=\"/cmd?id=10\"><button class='btn-green'>Time RAI</button></a><br><br>"; // Cmd 10 (Time 3)
+// â”€â”€ PÃ¡gina principal (gerada dinamicamente com os times configurados) â”€
+static void handleRoot() {
+    String html;
+    html.reserve(2048);
 
-    html += "<h3>Remover Pontos (-50)</h3>";
-    html += "<a href=\"/cmd?id=13\"><button class='btn-red'>Time BUS</button></a>";     // Cmd 13 (Time 0)
-    html += "<a href=\"/cmd?id=16\"><button class='btn-blue'>Time LAN</button></a><br>"; // Cmd 16 (Time 1)
+    html += F("<!DOCTYPE html><html><head>"
+              "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+              "<meta charset='UTF-8'>"
+              "<style>"
+              "body{font-family:Arial,sans-serif;text-align:center;"
+              "background:#1a1a2e;color:#eee;padding:12px;max-width:400px;margin:0 auto;}"
+              "h2{color:#00d4ff;margin:6px 0 14px;font-size:22px;}"
+              "h3{color:#aaa;font-size:13px;margin:14px 0 6px;text-transform:uppercase;}"
+              ".grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:4px;}"
+              ".btn{padding:16px 8px;font-size:17px;font-weight:bold;"
+              "border:none;border-radius:10px;cursor:pointer;width:100%;}"
+              ".btn-full{width:100%;padding:14px;font-size:16px;font-weight:bold;"
+              "border:none;border-radius:10px;cursor:pointer;margin:4px 0;display:block;}"
+              ".btn-red{background:#e74c3c;color:#fff;}"
+              ".btn-blue{background:#3498db;color:#fff;}"
+              ".btn-green{background:#27ae60;color:#fff;}"
+              ".btn-yellow{background:#f1c40f;color:#111;}"
+              ".btn-cyan{background:#00bcd4;color:#111;}"
+              ".btn-purple{background:#9b59b6;color:#fff;}"
+              ".btn-white{background:#ecf0f1;color:#111;}"
+              ".btn-start{background:#00d4ff;color:#111;font-size:18px;}"
+              ".btn-zero{background:#e67e22;color:#fff;}"
+              ".btn-save{background:#2ecc71;color:#fff;}"
+              "a{text-decoration:none;}"
+              "hr{border-color:#333;margin:14px 0;}"
+              "</style></head><body>");
 
-    // Comando 25: Zerar placar
-    html += "<br><a href=\"/cmd?id=25\"><button class='btn-zero'>ZERAR PLACAR</button></a>";
+    html += F("<h2>&#127942; PLACAR ESCOLAR</h2>");
 
-    html += "</body></html>";
-    
+    // BotÃ£o iniciar jogo (cmd 0)
+    html += F("<a href='/cmd?id=0'><button class='btn-full btn-start'>&#9654; INICIAR JOGO</button></a>");
+    html += F("<hr>");
+
+    // â”€â”€ BotÃµes de +50 pts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    html += F("<h3>&#10133; Adicionar 50 pontos</h3><div class='grid'>");
+    for (int i = 0; i < NUM_TEAMS; i++) {
+        html += "<a href='/cmd?id=";
+        html += String(i + 1);
+        html += "'><button class='btn ";
+        html += colorToCss(TIMES[i].color);
+        html += "'>";
+        html += TIMES[i].name;
+        html += "</button></a>";
+    }
+    html += F("</div>");
+
+    // â”€â”€ BotÃµes de -50 pts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    html += F("<h3>&#10134; Remover 50 pontos</h3><div class='grid'>");
+    for (int i = 0; i < NUM_TEAMS; i++) {
+        html += "<a href='/cmd?id=";
+        html += String(101 + i);
+        html += "'><button class='btn ";
+        html += colorToCss(TIMES[i].color);
+        html += "'>";
+        html += TIMES[i].name;
+        html += "</button></a>";
+    }
+    html += F("</div>");
+
+    html += F("<hr>");
+
+    // â”€â”€ Controles gerais â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    html += F("<a href='/cmd?id=200'><button class='btn-full btn-zero'>&#128260; ZERAR PLACAR</button></a>");
+    html += F("<a href='/cmd?id=201'><button class='btn-full btn-save'>&#128190; SALVAR PLACAR</button></a>");
+
+    html += F("</body></html>");
+
     server.send(200, "text/html", html);
 }
 
-// =========================================================
-// RECEPÃ‡ÃƒO DE COMANDOS
-// =========================================================
-void handleCmd() {
+// â”€â”€ Recebe o comando e redireciona de volta para a pÃ¡gina â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+static void handleCmd() {
     if (server.hasArg("id")) {
         comandoAtual = server.arg("id").toInt();
     }
-    // Redireciona de volta para a pÃ¡gina principal para nÃ£o sair da tela
     server.sendHeader("Location", "/");
     server.send(303);
 }
 
-// =========================================================
-// FUNÃ‡Ã•ES PRINCIPAIS CHAMADAS PELO MAIN
-// =========================================================
-void WebServer_Init() {
-    // Inicia o ESP32 como um Roteador (Access Point)
+// ======================================================================
+//  FUNÃ‡Ã•ES PÃšBLICAS
+// ======================================================================
+
+void PanelServer_Init() {
     WiFi.softAP(ssid, password);
-    
-    server.on("/", handleRoot);
+    IPAddress ip = WiFi.softAPIP();
+    DEBUG_PRINT("[WiFi] AP '");
+    DEBUG_PRINT(ssid);
+    DEBUG_PRINT("' iniciado. Acesse: http://");
+    DEBUG_PRINTLN(ip);
+
+    server.on("/",    handleRoot);
     server.on("/cmd", handleCmd);
     server.begin();
+    DEBUG_PRINTLN("[WiFi] Servidor HTTP na porta 80.");
 }
 
-int WebServer_GetCommand() {
-    // Atende clientes Wi-Fi rapidamente (Pooling SÃ­ncrono)
-    server.handleClient();
-    
-    int cmdTemporario = comandoAtual;
-    comandoAtual = -1; // Reseta a variÃ¡vel apÃ³s a leitura para nÃ£o repetir comando
-    
-    return cmdTemporario;
+int PanelServer_GetCommand() {
+    server.handleClient();   // Polling sÃ­ncrono â€” nÃ£o bloqueia o loop
+    int tmp = comandoAtual;
+    comandoAtual = -1;       // Reseta para nÃ£o repetir o mesmo comando
+    return tmp;
 }
 
-==================================================
-ARQUIVO: WebServer.h
-==================================================
+
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\Comms\PanelServer.h
+========================================
+
 #pragma once
 
-void WebServer_Init();
-int  WebServer_GetCommand();
+// âš ï¸  Este arquivo foi renomeado de WebServer.h â†’ PanelServer.h
+//     para evitar conflito de nome com a biblioteca <WebServer.h> do Arduino.
 
-==================================================
-ARQUIVO: Drawing.h
-==================================================
+void PanelServer_Init();
+int  PanelServer_GetCommand();
+
+
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\Display\Drawing.h
+========================================
+
 #ifndef drawing_h
   #define drawing_h
 
@@ -820,87 +976,129 @@ ARQUIVO: Drawing.h
 
 #endif //drawing_h
 
-==================================================
-ARQUIVO: LedMatrix.cpp
-==================================================
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\Display\LedMatrix.cpp
+========================================
+
 #include "LedMatrix.h"
-#include "../Hardware/Hal.h" 
-#include "Drawing.h"         
+#include "../Hardware/Hal.h"
+#include "Drawing.h"
 
 uint64_t ledPanelRgb[2][96]; // MemÃ³ria dobrada (32 linhas * 3 cores)
 
-void Display_PutPixel(int x, int y, int color) { 
-    if (x < 0 || x > 127 || y < 0 || y > 31) return; 
+void Display_PutPixel(int x, int y, int color)
+{
+    if (x < 0 || x > 127 || y < 0 || y > 31)
+        return;
 
     uint64_t unidade = 1;
     uint64_t tempar = 63 - (x % 64);
     int multiplier = 0;
-    
-    switch (color) {
-        case red:
-            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-        case green:
-            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-        case blue:
-            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-        case yellow:
-            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-        case cyan:
-            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-        case purple:
-            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-        case white:
-            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
+
+    switch (color)
+    {
+    case red:
+        multiplier = 0;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+        break;
+    case green:
+        multiplier = 1;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+        break;
+    case blue:
+        multiplier = 2;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+        break;
+    case yellow:
+        multiplier = 0;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+        multiplier = 1;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+        break;
+    case cyan:
+        multiplier = 1;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+        multiplier = 2;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+        break;
+    case purple:
+        multiplier = 0;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+        multiplier = 2;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+        break;
+    case white:
+        multiplier = 0;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+        multiplier = 1;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+        multiplier = 2;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
+        break;
     }
 }
 
-void Display_ClearPixel(int x, int y, int color) {
-    if (x < 0 || x > 127 || y < 0 || y > 31) return;
+void Display_ClearPixel(int x, int y, int color)
+{
+    if (x < 0 || x > 127 || y < 0 || y > 31)
+        return;
 
     uint64_t unidade = 1;
     uint64_t tempar = 63 - (x % 64);
     int multiplier = 0;
-    
-    switch (color) {
-        case red:
-            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar)); break;
-        case green:
-            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar)); break;
-        case blue:
-            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar)); break;
-        case white:
-            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
-            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
-            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar)); break;
+
+    switch (color)
+    {
+    case red:
+        multiplier = 0;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
+        break;
+    case green:
+        multiplier = 1;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
+        break;
+    case blue:
+        multiplier = 2;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
+        break;
+    case white:
+        multiplier = 0;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
+        multiplier = 1;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
+        multiplier = 2;
+        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
+        break;
     }
 }
 
-void Display_Clear() {
+void Display_Clear()
+{
     // Adeus, fantasmas! O memset "zera" toda a matriz de vÃ­deo instantaneamente.
     memset(ledPanelRgb, 0, sizeof(ledPanelRgb));
 }
 
-void Display_Init() {
+void Display_Init()
+{
     Display_Clear();
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < 32; i++)
+    {
         Display_PutPixel(0, i, white);
         Display_PutPixel(127, i, white);
         Display_PutPixel(63, i, white);
         Display_PutPixel(64, i, white);
     }
-    for (int i = 0; i < 64; i++) {
+    for (int i = 0; i < 64; i++)
+    {
         Display_PutPixel(i, 0, white);
-        Display_PutPixel(64 + i, 31, white); 
+        Display_PutPixel(64 + i, 31, white);
     }
 }
 
-void Display_TestPattern(int offset_x) {
-    Display_Clear(); 
+void Display_TestPattern(int offset_x)
+{
+    Display_Clear();
 
     // Desenha na fileira de CIMA (Que estÃ¡ de cabeÃ§a para baixo fisicamente)
     Display_DrawChar('C', offset_x + 0, 3, red);
@@ -915,34 +1113,47 @@ void Display_TestPattern(int offset_x) {
     Display_DrawChar('E', offset_x + 33, 19, red);
 }
 
-void Display_DrawChar(char c, int x, int y, int color) {
-    int letra = c - 'A'; 
-    if (letra < 0 || letra > 25) return;
-    
-    for (size_t i = 0; i < 10; i++) {
-        for (size_t j = 0; j < 10; j++) {
-            if (pgm_read_byte(&(alfabeto[letra][10 * i + j]))) {
+void Display_DrawChar(char c, int x, int y, int color)
+{
+    int letra = c - 'A';
+    if (letra < 0 || letra > 25)
+        return;
+
+    for (size_t i = 0; i < 10; i++)
+    {
+        for (size_t j = 0; j < 10; j++)
+        {
+            if (pgm_read_byte(&(alfabeto[letra][10 * i + j])))
+            {
                 Display_PutPixel(j + x, i + y, color);
             }
         }
     }
 }
 
-void Display_DrawDigit(int numero, int x, int y, int color) {
-    if(numero < 0 || numero > 9) return;
-    
-    for (size_t i = 0; i < 10; i++) {
-        for (size_t j = 0; j < 5; j++) {
-            if (pgm_read_byte(&(digitosAlg[numero][5 * i + j]))) {
+void Display_DrawDigit(int numero, int x, int y, int color)
+{
+    if (numero < 0 || numero > 9)
+        return;
+
+    for (size_t i = 0; i < 10; i++)
+    {
+        for (size_t j = 0; j < 5; j++)
+        {
+            if (pgm_read_byte(&(digitosAlg[numero][5 * i + j])))
+            {
                 Display_PutPixel(j + x, i + y, color);
             }
         }
     }
 }
 
-void Display_ClearCharArea(int x, int y, int color) {
-    for (size_t i = 0; i < 10; i++) {
-        for (size_t j = 0; j < 5; j++) {
+void Display_ClearCharArea(int x, int y, int color)
+{
+    for (size_t i = 0; i < 10; i++)
+    {
+        for (size_t j = 0; j < 5; j++)
+        {
             Display_ClearPixel(j + x, i + y, color);
         }
     }
@@ -956,39 +1167,49 @@ void Display_ClearCharArea(int x, int y, int color) {
 // Topo: De cabeÃ§a para baixo | Base: Normal
 // Fim da Linha (Push 1): Base-Direita (Painel 16)
 // ======================================================================
-void Display_Update() {
-    HAL_DisableLines(); 
+void Display_Update()
+{
+    HAL_DisableLines();
 
     // ====================================================
     // --- LINHAS PARES FÃSICAS (A=1, B=0) ---
     // ====================================================
-    for (int cores = 2; cores >= 0; cores--) {
-        
+    for (int cores = 2; cores >= 0; cores--)
+    {
+
         // 1. BASE-DIREITA (Normal, painel 0, Y: 16..31)
-        for (int displayID = 0; displayID <= 3; displayID++) {
-            for (int linhas = 16 + cores * 32; linhas <= 30 + cores * 32; linhas += 2) {
+        for (int displayID = 0; displayID <= 3; displayID++)
+        {
+            for (int linhas = 16 + cores * 32; linhas <= 30 + cores * 32; linhas += 2)
+            {
                 HAL_SpiTransferNormal((ledPanelRgb[0][linhas] >> (16 * displayID)));
             }
         }
 
         // 2. BASE-ESQUERDA (Normal, painel 1, Y: 16..31)
-        for (int displayID = 0; displayID <= 3; displayID++) {
-            for (int linhas = 16 + cores * 32; linhas <= 30 + cores * 32; linhas += 2) {
+        for (int displayID = 0; displayID <= 3; displayID++)
+        {
+            for (int linhas = 16 + cores * 32; linhas <= 30 + cores * 32; linhas += 2)
+            {
                 HAL_SpiTransferNormal((ledPanelRgb[1][linhas] >> (16 * displayID)));
             }
         }
 
         // 3. TOPO-ESQUERDA (Invertido, painel 1, Y: 0..15)
         // Como o painel estÃ¡ de cabeÃ§a para baixo, as linhas pares fÃ­sicas mapeiam as linhas ÃMPARES da imagem (de trÃ¡s pra frente)
-        for (int displayID = 3; displayID >= 0; displayID--) {
-            for (int linhas = 15 + cores * 32; linhas >= 1 + cores * 32; linhas -= 2) {
+        for (int displayID = 3; displayID >= 0; displayID--)
+        {
+            for (int linhas = 15 + cores * 32; linhas >= 1 + cores * 32; linhas -= 2)
+            {
                 HAL_SpiTransferInverted((ledPanelRgb[1][linhas] >> (16 * displayID)));
             }
         }
 
         // 4. TOPO-DIREITA (Invertido, painel 0, Y: 0..15)
-        for (int displayID = 3; displayID >= 0; displayID--) {
-            for (int linhas = 15 + cores * 32; linhas >= 1 + cores * 32; linhas -= 2) {
+        for (int displayID = 3; displayID >= 0; displayID--)
+        {
+            for (int linhas = 15 + cores * 32; linhas >= 1 + cores * 32; linhas -= 2)
+            {
                 HAL_SpiTransferInverted((ledPanelRgb[0][linhas] >> (16 * displayID)));
             }
         }
@@ -996,39 +1217,48 @@ void Display_Update() {
     HAL_LatchPanel();
     HAL_SetLinesPar();
     HAL_EnableDisplay();
-    delay(1); 
+    delay(1);
     HAL_DisableLines();
 
     // ====================================================
     // --- LINHAS ÃMPARES FÃSICAS (A=0, B=1) ---
     // ====================================================
-    for (int cores = 2; cores >= 0; cores--) {
-        
+    for (int cores = 2; cores >= 0; cores--)
+    {
+
         // 1. BASE-DIREITA (Normal, painel 0, Y: 16..31)
-        for (int displayID = 0; displayID <= 3; displayID++) {
-            for (int linhas = 17 + cores * 32; linhas <= 31 + cores * 32; linhas += 2) {
+        for (int displayID = 0; displayID <= 3; displayID++)
+        {
+            for (int linhas = 17 + cores * 32; linhas <= 31 + cores * 32; linhas += 2)
+            {
                 HAL_SpiTransferNormal((ledPanelRgb[0][linhas] >> (16 * displayID)));
             }
         }
 
         // 2. BASE-ESQUERDA (Normal, painel 1, Y: 16..31)
-        for (int displayID = 0; displayID <= 3; displayID++) {
-            for (int linhas = 17 + cores * 32; linhas <= 31 + cores * 32; linhas += 2) {
+        for (int displayID = 0; displayID <= 3; displayID++)
+        {
+            for (int linhas = 17 + cores * 32; linhas <= 31 + cores * 32; linhas += 2)
+            {
                 HAL_SpiTransferNormal((ledPanelRgb[1][linhas] >> (16 * displayID)));
             }
         }
 
         // 3. TOPO-ESQUERDA (Invertido, painel 1, Y: 0..15)
         // Linhas Ã­mpares fÃ­sicas mapeiam as linhas PARES da imagem (de trÃ¡s pra frente)
-        for (int displayID = 3; displayID >= 0; displayID--) {
-            for (int linhas = 14 + cores * 32; linhas >= 0 + cores * 32; linhas -= 2) {
+        for (int displayID = 3; displayID >= 0; displayID--)
+        {
+            for (int linhas = 14 + cores * 32; linhas >= 0 + cores * 32; linhas -= 2)
+            {
                 HAL_SpiTransferInverted((ledPanelRgb[1][linhas] >> (16 * displayID)));
             }
         }
 
         // 4. TOPO-DIREITA (Invertido, painel 0, Y: 0..15)
-        for (int displayID = 3; displayID >= 0; displayID--) {
-            for (int linhas = 14 + cores * 32; linhas >= 0 + cores * 32; linhas -= 2) {
+        for (int displayID = 3; displayID >= 0; displayID--)
+        {
+            for (int linhas = 14 + cores * 32; linhas >= 0 + cores * 32; linhas -= 2)
+            {
                 HAL_SpiTransferInverted((ledPanelRgb[0][linhas] >> (16 * displayID)));
             }
         }
@@ -1036,18 +1266,29 @@ void Display_Update() {
     HAL_LatchPanel();
     HAL_SetLinesImpar();
     HAL_EnableDisplay();
-    delay(1); 
+    delay(1);
 }
 
-==================================================
-ARQUIVO: LedMatrix.h
-==================================================
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\Display\LedMatrix.h
+========================================
+
 #pragma once
 #include <Arduino.h>
 
-enum Colors { red, blue, green, yellow, cyan, purple, white };
+enum Colors
+{
+    red,
+    blue,
+    green,
+    yellow,
+    cyan,
+    purple,
+    white
+};
 
-void Display_Init();                       
+void Display_Init();
 void Display_Update();
 void Display_Clear();
 
@@ -1058,172 +1299,300 @@ void Display_DrawChar(char c, int x, int y, int color);
 void Display_DrawDigit(int numero, int x, int y, int color);
 void Display_ClearCharArea(int x, int y, int color);
 
-void Display_TestPattern(); // <-- Modo de teste de Cascata
+void Display_TestPattern();             // <-- Modo de teste de Cascata
 void Display_TestPattern(int offset_x); // <-- Adicione o parÃ¢metro int
 
-==================================================
-ARQUIVO: ScoreBoard.cpp
-==================================================
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\Game\ScoreBoard.cpp
+========================================
+
 #include "Scoreboard.h"
-#include "../Display/LedMatrix.h" 
+#include "../../include/Config.h"
+#include "../Display/LedMatrix.h"
 #include <Arduino.h>
 #include <EEPROM.h>
 
-static int teamsScore[4] = {0, 0, 0, 0};
+// â”€â”€ Placar em memÃ³ria â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+static int teamsScore[NUM_TEAMS];
+
+// ======================================================================
+//  ENGINE DE LAYOUT DINÃ‚MICO
+//
+//  Tela: 128 Ã— 32 px
+//  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+//  â”‚  Ãrea de nomes  (x: 0..63, 64px)  â”‚  Ãrea de scores (x: 64..127)â”‚
+//  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+//
+//  DistribuiÃ§Ã£o de linhas:
+//    1 linha (NUM_TEAMS â‰¤ 2): nomes em y=11, caixas y=1..30
+//    2 linhas (NUM_TEAMS 3-4): linha 0 y=3/caixa 1..14 | linha 1 y=19/caixa 17..30
+// ======================================================================
+
+// Quantos times por linha (mÃ¡ximo 2 para o alfabeto de 10px caber)
+static int teamsPerRow() {
+    return (NUM_TEAMS <= 2) ? NUM_TEAMS : 2;
+}
+
+static int numRows() {
+    int tpr = teamsPerRow();
+    return (NUM_TEAMS + tpr - 1) / tpr;
+}
+
+// Y do texto do nome para cada linha lÃ³gica
+static int rowNameY(int row) {
+    return (numRows() == 1) ? 11 : (row == 0 ? 3 : 19);
+}
+
+// Y do topo e da base da caixa de score
+static int rowBoxTop(int row) {
+    return (numRows() == 1) ? 1 : (row == 0 ? 1 : 17);
+}
+
+static int rowBoxBottom(int row) {
+    return (numRows() == 1) ? 30 : (row == 0 ? 14 : 30);
+}
+
+// X inicial do slot de nome para a coluna `col`
+static int nameSlotX(int col) {
+    return col * (64 / teamsPerRow());
+}
+
+// X da borda esquerda e direita da caixa de score
+static int boxX_Start(int col) {
+    return 64 + col * (64 / teamsPerRow());
+}
+static int boxX_End(int col) {
+    return 64 + (col + 1) * (64 / teamsPerRow()) - 1;
+}
+
+// â”€â”€ Renderiza nÃºmero centrado dentro do espaÃ§o disponÃ­vel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+static void renderNumberInBox(int score, int startX, int y, int color) {
+    // Score limitado a 999 (3 dÃ­gitos)
+    int centenas = score / 100;
+    int dezenas  = (score % 100) / 10;
+    int unidades = score % 10;
+
+    if (score >= 100) {
+        Display_DrawDigit(centenas, startX,      y, color);
+        Display_DrawDigit(dezenas,  startX +  8, y, color);
+        Display_DrawDigit(unidades, startX + 16, y, color);
+    } else if (score >= 10) {
+        Display_DrawDigit(dezenas,  startX + 4,  y, color);
+        Display_DrawDigit(unidades, startX + 12, y, color);
+    } else {
+        Display_DrawDigit(unidades, startX + 8,  y, color);
+    }
+}
+
+// ======================================================================
+//  API PÃšBLICA
+// ======================================================================
 
 void Scoreboard_Init() {
-    for (int i = 0; i < 4; i++) {
+    // Nota: EEPROM.begin() Ã© chamado em HAL_Init(). NÃ£o reordene no setup().
+    for (int i = 0; i < NUM_TEAMS; i++) {
         EEPROM.get(i * sizeof(int), teamsScore[i]);
-        if (teamsScore[i] < 0 || teamsScore[i] > 9999) {
+        if (teamsScore[i] < 0 || teamsScore[i] > 999) {
             teamsScore[i] = 0;
+        }
+    }
+    DEBUG_PRINTLN("[Scoreboard] Placar carregado da EEPROM.");
+}
+
+void Scoreboard_Save() {
+    for (int i = 0; i < NUM_TEAMS; i++) {
+        EEPROM.put(i * sizeof(int), teamsScore[i]);
+    }
+    EEPROM.commit();
+}
+
+void Scoreboard_Clear() {
+    for (int i = 0; i < NUM_TEAMS; i++) teamsScore[i] = 0;
+    Scoreboard_Save();
+    DEBUG_PRINTLN("[Scoreboard] Placar zerado e salvo.");
+}
+
+void Scoreboard_AddPoints(int teamID, int pontos) {
+    if (teamID < 0 || teamID >= NUM_TEAMS) return;
+    teamsScore[teamID] += pontos;
+    if (teamsScore[teamID] > 999) teamsScore[teamID] = 999;
+}
+
+void Scoreboard_SubPoints(int teamID, int pontos) {
+    if (teamID < 0 || teamID >= NUM_TEAMS) return;
+    teamsScore[teamID] -= pontos;
+    if (teamsScore[teamID] < 0) teamsScore[teamID] = 0;
+}
+
+// â”€â”€ RenderizaÃ§Ã£o â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+void Scoreboard_DrawTeams() {
+    int tpr = teamsPerRow();
+    for (int i = 0; i < NUM_TEAMS; i++) {
+        int col   = i % tpr;
+        int row   = i / tpr;
+        int nameX = nameSlotX(col);
+        int nameY = rowNameY(row);
+        const char* nome = TIMES[i].name;
+        int cor = TIMES[i].color;
+
+        // Desenha atÃ© 3 letras; espaÃ§amento de 11px por letra (10px + 1px gap)
+        for (int j = 0; j < 3 && nome[j] != '\0'; j++) {
+            Display_DrawChar(nome[j], nameX + j * 11, nameY, cor);
         }
     }
 }
 
-void Scoreboard_Save() {
-    for (int i = 0; i < 4; i++) {
-        EEPROM.put(i * sizeof(int), teamsScore[i]);
-    }
-    EEPROM.commit(); 
-}
-
-void Scoreboard_Clear() {
-    for (int i = 0; i < 4; i++) {
-        teamsScore[i] = 0;
-    }
-    Scoreboard_Save();
-}
-
-void Scoreboard_AddPoints(int cmd) {
-    int timeID = cmd / 3;
-    int pontosGanhos = ((cmd % 3) + 1) * 50; 
-    teamsScore[timeID] += pontosGanhos;
-    if (teamsScore[timeID] > 999) teamsScore[timeID] = 999;
-}
-
-void Scoreboard_SubPoints(int cmd) {
-    int timeID = cmd / 3;
-    int pontosPerdidos = ((cmd % 3) + 1) * 50; 
-    teamsScore[timeID] -= pontosPerdidos;
-    if (teamsScore[timeID] < 0) teamsScore[timeID] = 0;
-}
-
-// RenderizaÃ§Ã£o Fixa para os 4 times (128x32)
 void Scoreboard_DrawBoxes() {
-    // Caixas Cima
-    for (int i = 0; i < 30; i++) {
-        Display_PutPixel(65 + i, 1, cyan);
-        Display_PutPixel(65 + i, 14, cyan);
-        Display_PutPixel(97 + i, 1, cyan);
-        Display_PutPixel(97 + i, 14, cyan);
-    }
-    // Caixas Baixo
-    for (int i = 0; i < 30; i++) {
-        Display_PutPixel(65 + i, 17, cyan);
-        Display_PutPixel(65 + i, 30, cyan);
-        Display_PutPixel(97 + i, 17, cyan);
-        Display_PutPixel(97 + i, 30, cyan);
-    }
-}
+    int tpr   = teamsPerRow();
+    int nRows = numRows();
 
-void Scoreboard_DrawTeams() {
-    int y_cima = 3;
-    Display_DrawChar('B', 0,  y_cima, red);
-    Display_DrawChar('U', 11, y_cima, red);
-    Display_DrawChar('S', 22, y_cima, red);
+    for (int row = 0; row < nRows; row++) {
+        int yTop = rowBoxTop(row);
+        int yBot = rowBoxBottom(row);
 
-    Display_DrawChar('L', 34, y_cima, blue);
-    Display_DrawChar('A', 45, y_cima, blue);
-    Display_DrawChar('N', 56, y_cima, blue);
+        // Quantos times nessa linha? (Ãºltima linha pode ter menos)
+        int teamsThisRow = min(tpr, NUM_TEAMS - row * tpr);
 
-    int y_baixo = 19;
-    Display_DrawChar('W', 0,  y_baixo, yellow);
-    Display_DrawChar('O', 11, y_baixo, yellow);
-    Display_DrawChar('O', 22, y_baixo, yellow);
+        for (int col = 0; col < teamsThisRow; col++) {
+            int xL = boxX_Start(col);
+            int xR = boxX_End(col);
 
-    Display_DrawChar('R', 34, y_baixo, green);
-    Display_DrawChar('A', 45, y_baixo, green);
-    Display_DrawChar('I', 56, y_baixo, green);
-}
-
-void renderNumberInBox(int score, int startX, int y, int color) {
-    int centenas = score / 100;
-    int dezenas  = (score % 100) / 10;
-    int unidades = score % 10;
-    
-    if (score >= 100) {
-        Display_DrawDigit(centenas, startX, y, color);
-        Display_DrawDigit(dezenas,  startX + 8, y, color);
-        Display_DrawDigit(unidades, startX + 16, y, color);
-    } else if (score >= 10) {
-        Display_DrawDigit(dezenas,  startX + 4, y, color);
-        Display_DrawDigit(unidades, startX + 12, y, color);
-    } else {
-        Display_DrawDigit(unidades, startX + 8, y, color);
+            // Bordas horizontais (topo e base)
+            for (int x = xL; x <= xR; x++) {
+                Display_PutPixel(x, yTop, cyan);
+                Display_PutPixel(x, yBot, cyan);
+            }
+            // Bordas verticais (esquerda e direita)
+            for (int y = yTop + 1; y < yBot; y++) {
+                Display_PutPixel(xL, y, cyan);
+                Display_PutPixel(xR, y, cyan);
+            }
+        }
     }
 }
 
 void Scoreboard_DrawScores() {
-    renderNumberInBox(teamsScore[0], 69, 4, white);
-    renderNumberInBox(teamsScore[1], 101, 4, white);
-    renderNumberInBox(teamsScore[2], 69, 20, white);
-    renderNumberInBox(teamsScore[3], 101, 20, white);
+    int tpr = teamsPerRow();
+    for (int i = 0; i < NUM_TEAMS; i++) {
+        int col    = i % tpr;
+        int row    = i / tpr;
+        int scoreX = boxX_Start(col) + 2;   // 2px de margem da borda esquerda
+        int scoreY = rowBoxTop(row)  + 2;   // 2px abaixo da borda superior
+        renderNumberInBox(teamsScore[i], scoreX, scoreY, white);
+    }
 }
 
-==================================================
-ARQUIVO: Scoreboard.h
-==================================================
+
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\Game\Scoreboard.h
+========================================
+
 #pragma once
 
-void Scoreboard_Init();          
-void Scoreboard_Save();          
-void Scoreboard_Clear();
-void Scoreboard_AddPoints(int cmd); 
-void Scoreboard_SubPoints(int cmd);
+// Inicializa o placar (lÃª EEPROM). Chame apÃ³s HAL_Init().
+void Scoreboard_Init();
 
+// Persiste o placar atual na EEPROM.
+void Scoreboard_Save();
+
+// Zera todos os times e salva.
+void Scoreboard_Clear();
+
+// Adiciona `pontos` ao time `teamID` (0-based).
+void Scoreboard_AddPoints(int teamID, int pontos);
+
+// Subtrai `pontos` do time `teamID` (0-based), mÃ­nimo 0.
+void Scoreboard_SubPoints(int teamID, int pontos);
+
+// FunÃ§Ãµes de renderizaÃ§Ã£o (chame sempre na ordem: DrawTeams â†’ DrawBoxes â†’ DrawScores)
 void Scoreboard_DrawTeams();
 void Scoreboard_DrawBoxes();
 void Scoreboard_DrawScores();
 
-==================================================
-ARQUIVO: Hal.cpp
-==================================================
+
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\Game\TeamsConfig.cpp
+========================================
+
+#include "../../include/Config.h"
+
+// ======================================================================
+//  DEFINA OS SEUS TIMES AQUI
+//  - name: atÃ© 3 letras maiÃºsculas (A-Z)
+//  - color: use as constantes COR_* de Config.h
+//
+//  Para mudar o nÃºmero de times, altere NUM_TEAMS em Config.h
+//  e ajuste o array abaixo para ter exatamente NUM_TEAMS entradas.
+// ======================================================================
+
+const TeamConfig TIMES[NUM_TEAMS] = {
+    { "TM1", COR_VERMELHO },   // Time 1 â€” vermelho
+    { "TM2", COR_AZUL     },   // Time 2 â€” azul
+    { "TM3", COR_AMARELO  },   // Time 3 â€” amarelo
+    { "TM4", COR_VERDE    },   // Time 4 â€” verde
+ // { "TM5", COR_CIANO    },   // Time 5 â€” descomente e mude NUM_TEAMS para 5
+};
+
+// ======================================================================
+//  REFERÃŠNCIA DE CORES
+//  COR_VERMELHO = 0   COR_AZUL    = 1   COR_VERDE   = 2
+//  COR_AMARELO  = 3   COR_CIANO   = 4   COR_ROXO    = 5
+//  COR_BRANCO   = 6
+// ======================================================================
+
+
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\Hardware\Hal.cpp
+========================================
+
 #include "Hal.h"
 #include "../include/Config.h"
 
-void HAL_Init() {
+void HAL_Init()
+{
     pinMode(PIN_A, OUTPUT);
     pinMode(PIN_B, OUTPUT);
     pinMode(PIN_LAT, OUTPUT);
     pinMode(PIN_OE, OUTPUT);
     pinMode(PIN_CLK, OUTPUT);
     pinMode(PIN_DATA, OUTPUT);
-    
+
     EEPROM.begin(512);
     SPI.begin(PIN_CLK, -1, PIN_DATA, -1);
 }
 
-int HAL_PingHardware() {
+int HAL_PingHardware()
+{
     pinMode(PIN_DATA, OUTPUT);
     pinMode(PIN_CLK, OUTPUT);
     pinMode(PIN_OE, OUTPUT);
     pinMode(PIN_RETORNO, INPUT_PULLDOWN);
 
-    digitalWrite(PIN_OE, HIGH); 
+    digitalWrite(PIN_OE, HIGH);
     digitalWrite(PIN_CLK, LOW);
-    
+
     digitalWrite(PIN_DATA, LOW);
-    for(int i = 0; i < 20000; i++) {
-        digitalWrite(PIN_CLK, HIGH); digitalWrite(PIN_CLK, LOW);
+    for (int i = 0; i < 20000; i++)
+    {
+        digitalWrite(PIN_CLK, HIGH);
+        digitalWrite(PIN_CLK, LOW);
     }
 
     digitalWrite(PIN_DATA, HIGH);
-    digitalWrite(PIN_CLK, HIGH); digitalWrite(PIN_CLK, LOW);
+    digitalWrite(PIN_CLK, HIGH);
+    digitalWrite(PIN_CLK, LOW);
     digitalWrite(PIN_DATA, LOW);
-    
+
     int contador_de_bits = 1;
-    while(digitalRead(PIN_RETORNO) == LOW && contador_de_bits < 20000) {
-        digitalWrite(PIN_CLK, HIGH); digitalWrite(PIN_CLK, LOW);
+    while (digitalRead(PIN_RETORNO) == LOW && contador_de_bits < 20000)
+    {
+        digitalWrite(PIN_CLK, HIGH);
+        digitalWrite(PIN_CLK, LOW);
         contador_de_bits++;
     }
 
@@ -1232,55 +1601,64 @@ int HAL_PingHardware() {
     return contador_de_bits;
 }
 
-void HAL_SpiTransferNormal(uint16_t data) {
+void HAL_SpiTransferNormal(uint16_t data)
+{
     // Reduzimos a velocidade de 4000000 para 500000 para evitar reflexÃ£o!
-    SPI.beginTransaction(SPISettings(4000000, LSBFIRST, SPI_MODE0)); 
+    SPI.beginTransaction(SPISettings(4000000, LSBFIRST, SPI_MODE0));
     SPI.transfer16(data);
     SPI.endTransaction();
 }
 
-void HAL_SpiTransferInverted(uint16_t data) {
+void HAL_SpiTransferInverted(uint16_t data)
+{
     // Reduzimos a velocidade de 4000000 para 500000 para evitar reflexÃ£o!
     SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
     SPI.transfer16(data);
     SPI.endTransaction();
 }
 
-void HAL_LatchPanel() {
+void HAL_LatchPanel()
+{
     digitalWrite(PIN_LAT, HIGH);
     digitalWrite(PIN_LAT, LOW);
 }
 
-void HAL_SetLinesPar() {
+void HAL_SetLinesPar()
+{
     digitalWrite(PIN_A, HIGH);
     digitalWrite(PIN_B, LOW);
 }
 
-void HAL_SetLinesImpar() {
+void HAL_SetLinesImpar()
+{
     digitalWrite(PIN_B, HIGH);
     digitalWrite(PIN_A, LOW);
 }
 
-void HAL_DisableLines() {
+void HAL_DisableLines()
+{
     digitalWrite(PIN_A, HIGH);
     digitalWrite(PIN_B, HIGH);
-    digitalWrite(PIN_OE, HIGH); 
+    digitalWrite(PIN_OE, HIGH);
 }
 
-void HAL_EnableDisplay() {
+void HAL_EnableDisplay()
+{
     digitalWrite(PIN_OE, LOW); // Acende a tela (LÃ³gica invertida)
 }
 
-==================================================
-ARQUIVO: Hal.h
-==================================================
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\Hardware\Hal.h
+========================================
+
 #pragma once
 #include <Arduino.h>
 #include <SPI.h>
 #include <EEPROM.h>
 
-void HAL_Init();                     
-int  HAL_PingHardware();
+void HAL_Init();
+int HAL_PingHardware();
 
 // FunÃ§Ãµes de varredura do Painel
 void HAL_SpiTransferNormal(uint16_t data);
@@ -1291,189 +1669,149 @@ void HAL_SetLinesImpar();
 void HAL_DisableLines();
 void HAL_EnableDisplay(); // <-- Nova funÃ§Ã£o do brilho
 
-==================================================
-ARQUIVO: main.cpp
-==================================================
+
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\src\main.cpp
+========================================
+
 #include <Arduino.h>
-#include "../include/Config.h"
-#include "Hardware/Hal.h"
-#include "Display/LedMatrix.h"
-#include "Comms/Communication.h"
-#include "Comms/WebServer.h"
-#include "Game/Scoreboard.h"
 
-enum stateMachine
-{
-    test_hardware,
-    start,
-    idle
-};
-uint8_t panelPlayerState = test_hardware;
+// Novo mapeamento dos pinos
+const int PIN_R1 = 11;
+const int PIN_G1 = 12;
+const int PIN_B1 = 10;
+const int PIN_R2 = 7;
+const int PIN_G2 = 15;
+const int PIN_B2 = 6;
 
-enum comandos
-{
-    Ir_Para_Idle = 0,
-    Cmd_AddPonto_Inicio = 1,
-    Cmd_AddPonto_Fim = 12,
-    Cmd_SubPonto_Inicio = 13,
-    Cmd_SubPonto_Fim = 24,
-    ZERA_O_PLACAR = 25,
-    GUARDA_O_PLACAR = 26
-};
+const int PIN_A = 18;
+const int PIN_B = 8;
 
-// --- ADICIONE ESTAS DUAS VARIÃVEIS GLOBAIS LÃ EM CIMA (antes do setup) ---
-int test_x_offset = -40;
-unsigned long lastScrollTime = 0;
+const int PIN_CLK = 9;
+const int PIN_LAT = 46;
+const int PIN_OE = 3;
+
+// Array para facilitar a inicializaÃ§Ã£o
+const int hubPins[] = {PIN_R1, PIN_G1, PIN_B1, PIN_R2, PIN_G2, PIN_B2,
+                       PIN_A, PIN_B, PIN_CLK, PIN_LAT, PIN_OE};
+const int numPins = sizeof(hubPins) / sizeof(hubPins[0]);
 
 void setup()
 {
-    Comm_Init();
-    HAL_Init();
+    Serial.begin(115200);
+    delay(1000);
+    Serial.println("\n--- Iniciando Sistema de Teste HUB75 ---");
 
-    Display_Clear();
-    DEBUG_PRINTLN("=== Modo de Teste de Hardware Iniciado ===");
+    // Inicializa todos os pinos como saÃ­da com nÃ­vel lÃ³gico 0
+    for (int i = 0; i < numPins; i++)
+    {
+        pinMode(hubPins[i], OUTPUT);
+        digitalWrite(hubPins[i], LOW);
+    }
 
-    WebServer_Init(); // Pode inicializar o Wi-Fi sem problemas
+    Serial.println("Todos os pinos configurados como OUTPUT em nivel LOW (0V).");
+    Serial.println("Envie comandos no formato: PINO ESTADO (Exemplo: R1 1, OE 0, CLK 1)");
+    Serial.println("----------------------------------------");
+
+    delay(5000);
+    Serial.println("Indo para o LOOP agora");
+}
+
+void processaComando(String comando)
+{
+    // Limpa espaÃ§os extras e caracteres de nova linha
+    comando.trim();
+    comando.toUpperCase();
+
+    // Se estiver vazio (ex: usuÃ¡rio apenas apertou Enter sem querer), ignora
+    if (comando.length() == 0)
+        return;
+
+    // Feedback imediato indicando que o ESP32 recebeu a string
+    Serial.print("Comando recebido: [");
+    Serial.print(comando);
+    Serial.print("] -> ");
+
+    int espacoIndex = comando.indexOf(' ');
+
+    // Verifica se o formato tem um espaÃ§o separando pino e estado
+    if (espacoIndex == -1)
+    {
+        Serial.println("Comando incorreto! Falta o espaco entre o pino e o estado.");
+        return;
+    }
+
+    String pinoStr = comando.substring(0, espacoIndex);
+    int estado = comando.substring(espacoIndex + 1).toInt();
+
+    int pinoFisico = -1;
+
+    // Mapeamento das strings para os pinos fÃ­sicos
+    if (pinoStr == "R1")
+        pinoFisico = PIN_R1;
+    else if (pinoStr == "G1")
+        pinoFisico = PIN_G1;
+    else if (pinoStr == "B1")
+        pinoFisico = PIN_B1;
+    else if (pinoStr == "R2")
+        pinoFisico = PIN_R2;
+    else if (pinoStr == "G2")
+        pinoFisico = PIN_G2;
+    else if (pinoStr == "B2")
+        pinoFisico = PIN_B2;
+    else if (pinoStr == "A")
+        pinoFisico = PIN_A;
+    else if (pinoStr == "B")
+        pinoFisico = PIN_B;
+    else if (pinoStr == "CLK")
+        pinoFisico = PIN_CLK;
+    else if (pinoStr == "LAT")
+        pinoFisico = PIN_LAT;
+    else if (pinoStr == "OE")
+        pinoFisico = PIN_OE;
+
+    // Aplica o comando se o pino foi reconhecido
+    if (pinoFisico != -1)
+    {
+        digitalWrite(pinoFisico, estado > 0 ? HIGH : LOW);
+        Serial.print("Sucesso! Pino ");
+        Serial.print(pinoStr);
+        Serial.print(" alterado para ");
+        Serial.println(estado > 0 ? "HIGH" : "LOW");
+    }
+    else
+    {
+        Serial.println("Comando incorreto! O nome do pino nao existe na lista.");
+    }
 }
 
 void loop()
 {
-    int comandoRecebido = Comm_GetCommand();
-    if (comandoRecebido == -1)
+    if (Serial.available() > 0)
     {
-        comandoRecebido = WebServer_GetCommand();
+        String comando = Serial.readStringUntil('\n');
+        processaComando(comando);
     }
-
-    switch (panelPlayerState)
-    {
-    case test_hardware:
-        // A cada 80ms, move o texto 1 pixel para a direita
-        if (millis() - lastScrollTime > 80)
-        {
-            test_x_offset++;
-            if (test_x_offset > 128)
-            {
-                test_x_offset = -40; // Volta pro comeÃ§o
-            }
-
-            Display_TestPattern(test_x_offset);
-            lastScrollTime = millis();
-        }
-
-    case start:
-        if (comandoRecebido == Ir_Para_Idle)
-        {
-            DEBUG_PRINTLN("[START] Comando 0 Recebido. Saindo do teste e indo pro Jogo!");
-
-            Scoreboard_Init();
-            Display_Clear();
-            Scoreboard_DrawTeams();
-            Scoreboard_DrawBoxes();
-            Scoreboard_DrawScores();
-
-            panelPlayerState = idle;
-        }
-        break;
-
-    case idle:
-        bool pontuacaoAlterada = false;
-
-        if (comandoRecebido >= Cmd_AddPonto_Inicio && comandoRecebido <= Cmd_AddPonto_Fim)
-        {
-            Scoreboard_AddPoints(comandoRecebido - 1);
-            pontuacaoAlterada = true;
-        }
-        else if (comandoRecebido >= Cmd_SubPonto_Inicio && comandoRecebido <= Cmd_SubPonto_Fim)
-        {
-            Scoreboard_SubPoints(comandoRecebido - 13);
-            pontuacaoAlterada = true;
-        }
-        else if (comandoRecebido == ZERA_O_PLACAR)
-        {
-            Scoreboard_Clear();
-            pontuacaoAlterada = true;
-        }
-        else if (comandoRecebido == GUARDA_O_PLACAR)
-        {
-            Scoreboard_Save();
-            DEBUG_PRINTLN(">>> Placar Salvo na Memoria!");
-        }
-        else if (comandoRecebido == Ir_Para_Idle)
-        {
-            ESP.restart();
-        }
-
-        if (pontuacaoAlterada)
-        {
-            Display_Clear();
-            Scoreboard_DrawTeams();
-            Scoreboard_DrawBoxes();
-            Scoreboard_DrawScores();
-        }
-        break;
-    }
-
-    Display_Update();
 }
 
-==================================================
-ARQUIVO: Config.h
-==================================================
-#pragma once
-#include <Arduino.h>
 
-// ======================================================================
-// CONFIGURAÃ‡Ã•ES GLOBAIS E PINOS (ESP32-C3)
-// ======================================================================
+========================================
+ARQUIVO: W:\Projects\1_Projetos_Ativos\ContadorLive\Firmware\Controlador-LIVE-FW\platformio.ini
+========================================
 
-// Pinos do Painel de LED (SPI e Controle)
-constexpr int PIN_LAT   = 0;
-constexpr int PIN_OE    = 1;
-constexpr int PIN_B     = 3;
-constexpr int PIN_A     = 4;
-constexpr int PIN_CLK   = 6;
-constexpr int PIN_DATA  = 7;
+; PlatformIO Project Configuration File
+;
+;   Build options: build flags, source filter
+;   Upload options: custom upload port, speed and extra flags
+;   Library options: dependencies, extra library storages
+;   Advanced options: extra scripting
+;
+; Please visit documentation for the other options and examples
+; https://docs.platformio.org/page/projectconf.html
 
-// Pino do Sonar (Auto-detecÃ§Ã£o de tamanho do painel)
-constexpr int PIN_RETORNO = 2;
-
-// Pinos de ComunicaÃ§Ã£o Serial (MÃ³dulo Bluetooth HC-05)
-constexpr int RX_PIN = 20;
-constexpr int TX_PIN = 21;
-
-// ConfiguraÃ§Ãµes do Jogo
-constexpr long INTERVALO_EXIBICAO = 3000; // Tempo de alternÃ¢ncia de tela em ms
-
-// Sistema de Debug (Defina como 0 para calar o terminal e ganhar performance)
-#define DEBUG_MODE 1  
-
-#if DEBUG_MODE
-  #define DEBUG_PRINT(x)    Serial.print(x)
-  #define DEBUG_PRINTLN(x)  Serial.println(x)
-  #define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
-#else
-  #define DEBUG_PRINT(x)
-  #define DEBUG_PRINTLN(x)
-  #define DEBUG_PRINTF(...)
-#endif
-
-==================================================
-ARQUIVO: Debug.h
-==================================================
-#ifndef DEBUG_H
-#define DEBUG_H
-
-#define DEBUG_MODE 1  // Altere para 0 para desligar todos os prints
-
-#if DEBUG_MODE
-  #define DEBUG_PRINT(x)   Serial.print(x)
-  #define DEBUG_PRINTLN(x) Serial.println(x)
-  #define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
-#else
-  #define DEBUG_PRINT(x)
-  #define DEBUG_PRINTLN(x)
-  #define DEBUG_PRINTF(...)
-#endif
-
-#endif
-
+[env:esp32-s3-devkitc-1]
+platform = espressif32
+board = esp32-s3-devkitc-1
+framework = arduino
+monitor_speed = 115200
+; As flags de USB foram removidas para forÃ§ar a comunicaÃ§Ã£o via UART (TX/RX)

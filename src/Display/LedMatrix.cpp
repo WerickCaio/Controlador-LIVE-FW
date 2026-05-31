@@ -1,287 +1,85 @@
 #include "LedMatrix.h"
-#include "../Hardware/Hal.h"
-#include "Drawing.h"
+#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 
-uint64_t ledPanelRgb[2][96]; // Memória dobrada (32 linhas * 3 cores)
+// Ajuste para a resolução física de apenas 1 painel
+#define PANEL_RES_X 64
+#define PANEL_RES_Y 32
+#define PANEL_CHAIN 2 // Se forem 2 painéis em cascata (total 128x32)
 
-void Display_PutPixel(int x, int y, int color)
+// Ponteiro global para o display DMA
+MatrixPanel_I2S_DMA *dma_display = nullptr;
+
+void Display_Init()
 {
-    if (x < 0 || x > 127 || y < 0 || y > 31)
-        return;
+    // 1. Configuramos os seus pinos exatos da placa customizada
+    HUB75_I2S_CFG::i2s_pins _customPins = {
+        11, // R1
+        12, // G1
+        10, // B1
+        7,  // R2
+        15, // G2
+        6,  // B2
+        18, // A
+        8,  // B
+        -1, // C  (⚠️ ALERTA DE HARDWARE ABAIXO)
+        -1, // D  (⚠️ ALERTA DE HARDWARE ABAIXO)
+        -1, // E
+        46, // LAT
+        3,  // OE
+        9   // CLK
+    };
 
-    uint64_t unidade = 1;
-    uint64_t tempar = 63 - (x % 64);
-    int multiplier = 0;
+    // 2. Criamos as configurações do painel
+    HUB75_I2S_CFG mxconfig(
+        PANEL_RES_X,
+        PANEL_RES_Y,
+        PANEL_CHAIN,
+        _customPins);
 
-    switch (color)
-    {
-    case red:
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-        break;
-    case green:
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-        break;
-    case blue:
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-        break;
-    case yellow:
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-        break;
-    case cyan:
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-        break;
-    case purple:
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-        break;
-    case white:
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-        break;
-    }
-}
-
-void Display_ClearPixel(int x, int y, int color)
-{
-    if (x < 0 || x > 127 || y < 0 || y > 31)
-        return;
-
-    uint64_t unidade = 1;
-    uint64_t tempar = 63 - (x % 64);
-    int multiplier = 0;
-
-    switch (color)
-    {
-    case red:
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
-        break;
-    case green:
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
-        break;
-    case blue:
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
-        break;
-    case white:
-        multiplier = 0;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
-        multiplier = 1;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
-        multiplier = 2;
-        ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
-        break;
-    }
+    // 3. Inicializa o motor DMA
+    dma_display = new MatrixPanel_I2S_DMA(mxconfig);
+    dma_display->begin();
+    dma_display->clearScreen();
+    dma_display->setBrightness8(100); // 0 a 255
 }
 
 void Display_Clear()
 {
-    // Adeus, fantasmas! O memset "zera" toda a matriz de vídeo instantaneamente.
-    memset(ledPanelRgb, 0, sizeof(ledPanelRgb));
+    dma_display->clearScreen();
 }
 
-void Display_Init()
+// Convertendo a sua enumeração antiga de cores para o RGB565 da biblioteca
+uint16_t getDMAColor(int color)
 {
-    Display_Clear();
-    for (int i = 0; i < 32; i++)
+    switch (color)
     {
-        Display_PutPixel(0, i, white);
-        Display_PutPixel(127, i, white);
-        Display_PutPixel(63, i, white);
-        Display_PutPixel(64, i, white);
-    }
-    for (int i = 0; i < 64; i++)
-    {
-        Display_PutPixel(i, 0, white);
-        Display_PutPixel(64 + i, 31, white);
-    }
-}
-
-void Display_TestPattern(int offset_x)
-{
-    Display_Clear();
-
-    // Desenha na fileira de CIMA (Que está de cabeça para baixo fisicamente)
-    Display_DrawChar('C', offset_x + 0, 3, red);
-    Display_DrawChar('A', offset_x + 11, 3, red);
-    Display_DrawChar('S', offset_x + 22, 3, red);
-    Display_DrawChar('A', offset_x + 33, 3, red);
-
-    // Desenha na fileira de BAIXO (Que está na posição normal fisicamente)
-    Display_DrawChar('B', offset_x + 0, 19, red);
-    Display_DrawChar('A', offset_x + 11, 19, red);
-    Display_DrawChar('S', offset_x + 22, 19, red);
-    Display_DrawChar('E', offset_x + 33, 19, red);
-}
-
-void Display_DrawChar(char c, int x, int y, int color)
-{
-    int letra = c - 'A';
-    if (letra < 0 || letra > 25)
-        return;
-
-    for (size_t i = 0; i < 10; i++)
-    {
-        for (size_t j = 0; j < 10; j++)
-        {
-            if (pgm_read_byte(&(alfabeto[letra][10 * i + j])))
-            {
-                Display_PutPixel(j + x, i + y, color);
-            }
-        }
+    case red:
+        return dma_display->color565(255, 0, 0);
+    case green:
+        return dma_display->color565(0, 255, 0);
+    case blue:
+        return dma_display->color565(0, 0, 255);
+    case yellow:
+        return dma_display->color565(255, 255, 0);
+    case cyan:
+        return dma_display->color565(0, 255, 255);
+    case purple:
+        return dma_display->color565(255, 0, 255);
+    case white:
+        return dma_display->color565(255, 255, 255);
+    default:
+        return 0;
     }
 }
 
-void Display_DrawDigit(int numero, int x, int y, int color)
+void Display_PutPixel(int x, int y, int color)
 {
-    if (numero < 0 || numero > 9)
-        return;
-
-    for (size_t i = 0; i < 10; i++)
-    {
-        for (size_t j = 0; j < 5; j++)
-        {
-            if (pgm_read_byte(&(digitosAlg[numero][5 * i + j])))
-            {
-                Display_PutPixel(j + x, i + y, color);
-            }
-        }
-    }
+    dma_display->drawPixel(x, y, getDMAColor(color));
 }
 
-void Display_ClearCharArea(int x, int y, int color)
+// --- COMO DESENHAR IMAGENS ---
+// A biblioteca herda da Adafruit_GFX, o que permite imprimir matrizes diretas!
+void Display_DrawImage(int x, int y, const uint8_t *bitmap, int w, int h, int color)
 {
-    for (size_t i = 0; i < 10; i++)
-    {
-        for (size_t j = 0; j < 5; j++)
-        {
-            Display_ClearPixel(j + x, i + y, color);
-        }
-    }
-}
-
-// ======================================================================
-// VARREDURA SPI CASCATA 128x32
-// ======================================================================
-// ======================================================================
-// VARREDURA SPI CASCATA 128x32 (TOPOLOGIA EM "SERPENTE")
-// Topo: De cabeça para baixo | Base: Normal
-// Fim da Linha (Push 1): Base-Direita (Painel 16)
-// ======================================================================
-void Display_Update()
-{
-    HAL_DisableLines();
-
-    // ====================================================
-    // --- LINHAS PARES FÍSICAS (A=1, B=0) ---
-    // ====================================================
-    for (int cores = 2; cores >= 0; cores--)
-    {
-
-        // 1. BASE-DIREITA (Normal, painel 0, Y: 16..31)
-        for (int displayID = 0; displayID <= 3; displayID++)
-        {
-            for (int linhas = 16 + cores * 32; linhas <= 30 + cores * 32; linhas += 2)
-            {
-                HAL_SpiTransferNormal((ledPanelRgb[0][linhas] >> (16 * displayID)));
-            }
-        }
-
-        // 2. BASE-ESQUERDA (Normal, painel 1, Y: 16..31)
-        for (int displayID = 0; displayID <= 3; displayID++)
-        {
-            for (int linhas = 16 + cores * 32; linhas <= 30 + cores * 32; linhas += 2)
-            {
-                HAL_SpiTransferNormal((ledPanelRgb[1][linhas] >> (16 * displayID)));
-            }
-        }
-
-        // 3. TOPO-ESQUERDA (Invertido, painel 1, Y: 0..15)
-        // Como o painel está de cabeça para baixo, as linhas pares físicas mapeiam as linhas ÍMPARES da imagem (de trás pra frente)
-        for (int displayID = 3; displayID >= 0; displayID--)
-        {
-            for (int linhas = 15 + cores * 32; linhas >= 1 + cores * 32; linhas -= 2)
-            {
-                HAL_SpiTransferInverted((ledPanelRgb[1][linhas] >> (16 * displayID)));
-            }
-        }
-
-        // 4. TOPO-DIREITA (Invertido, painel 0, Y: 0..15)
-        for (int displayID = 3; displayID >= 0; displayID--)
-        {
-            for (int linhas = 15 + cores * 32; linhas >= 1 + cores * 32; linhas -= 2)
-            {
-                HAL_SpiTransferInverted((ledPanelRgb[0][linhas] >> (16 * displayID)));
-            }
-        }
-    }
-    HAL_LatchPanel();
-    HAL_SetLinesPar();
-    HAL_EnableDisplay();
-    delay(1);
-    HAL_DisableLines();
-
-    // ====================================================
-    // --- LINHAS ÍMPARES FÍSICAS (A=0, B=1) ---
-    // ====================================================
-    for (int cores = 2; cores >= 0; cores--)
-    {
-
-        // 1. BASE-DIREITA (Normal, painel 0, Y: 16..31)
-        for (int displayID = 0; displayID <= 3; displayID++)
-        {
-            for (int linhas = 17 + cores * 32; linhas <= 31 + cores * 32; linhas += 2)
-            {
-                HAL_SpiTransferNormal((ledPanelRgb[0][linhas] >> (16 * displayID)));
-            }
-        }
-
-        // 2. BASE-ESQUERDA (Normal, painel 1, Y: 16..31)
-        for (int displayID = 0; displayID <= 3; displayID++)
-        {
-            for (int linhas = 17 + cores * 32; linhas <= 31 + cores * 32; linhas += 2)
-            {
-                HAL_SpiTransferNormal((ledPanelRgb[1][linhas] >> (16 * displayID)));
-            }
-        }
-
-        // 3. TOPO-ESQUERDA (Invertido, painel 1, Y: 0..15)
-        // Linhas ímpares físicas mapeiam as linhas PARES da imagem (de trás pra frente)
-        for (int displayID = 3; displayID >= 0; displayID--)
-        {
-            for (int linhas = 14 + cores * 32; linhas >= 0 + cores * 32; linhas -= 2)
-            {
-                HAL_SpiTransferInverted((ledPanelRgb[1][linhas] >> (16 * displayID)));
-            }
-        }
-
-        // 4. TOPO-DIREITA (Invertido, painel 0, Y: 0..15)
-        for (int displayID = 3; displayID >= 0; displayID--)
-        {
-            for (int linhas = 14 + cores * 32; linhas >= 0 + cores * 32; linhas -= 2)
-            {
-                HAL_SpiTransferInverted((ledPanelRgb[0][linhas] >> (16 * displayID)));
-            }
-        }
-    }
-    HAL_LatchPanel();
-    HAL_SetLinesImpar();
-    HAL_EnableDisplay();
-    delay(1);
+    dma_display->drawBitmap(x, y, bitmap, w, h, getDMAColor(color));
 }
