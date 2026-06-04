@@ -5,14 +5,61 @@
 
 Preferences preferences;
 
+static int numTeams = 4;
 static int teamsScore[4] = {0, 0, 0, 0};
-static char teamNames[4][4] = {"BUS", "LAN", "WOO", "RAI"};
+static char teamNames[4][12] = {"BUS", "LAN", "WOO", "RAI"};
 static int teamColors[4] = {red, blue, yellow, green};
+
+static int testMode = 0;
+static int testFrame = 0;
+static unsigned long lastTestUpdate = 0;
+
+void Scoreboard_SetTestMode(int mode) {
+    testMode = mode;
+    testFrame = 0;
+    lastTestUpdate = 0;
+}
+
+int Scoreboard_GetTestMode() {
+    return testMode;
+}
+
+void Scoreboard_SetTeamColor(int teamId, int color) {
+    if (teamId >= 0 && teamId < 4) {
+        teamColors[teamId] = color;
+    }
+}
+
+int Scoreboard_GetTeamColor(int teamId) {
+    if (teamId >= 0 && teamId < 4) return teamColors[teamId];
+    return white;
+}
+
+void Scoreboard_SetBrightness(int brightness) {
+    preferences.putInt("bright", brightness);
+    Display_SetBrightness(brightness);
+}
+
+int Scoreboard_GetBrightness() {
+    return preferences.getInt("bright", 1000);
+}
+
+void Scoreboard_SetNumTeams(int num) {
+    if (num >= 2 && num <= 4) {
+        numTeams = num;
+        preferences.putInt("numTeams", num);
+        Scoreboard_Clear();
+    }
+}
+
+int Scoreboard_GetNumTeams() {
+    return numTeams;
+}
 
 void Scoreboard_SetTeamName(int teamId, const char* name) {
     if (teamId >= 0 && teamId < 4) {
-        strncpy(teamNames[teamId], name, 3);
-        teamNames[teamId][3] = '\0';
+        strncpy(teamNames[teamId], name, 11);
+        teamNames[teamId][11] = '\0';
     }
 }
 
@@ -37,6 +84,9 @@ int Scoreboard_GetScore(int teamId) {
 void Scoreboard_Init() {
     preferences.begin("acamp", false);
     
+    numTeams = preferences.getInt("numTeams", 4);
+    if (numTeams < 2 || numTeams > 4) numTeams = 4;
+    
     const char* defaultNames[4] = {"BUS", "LAN", "WOO", "RAI"};
     for (int i = 0; i < 4; i++) {
         // Load Score
@@ -49,9 +99,17 @@ void Scoreboard_Init() {
         // Load Name
         String nameKey = "name" + String(i);
         String savedName = preferences.getString(nameKey.c_str(), defaultNames[i]);
-        strncpy(teamNames[i], savedName.c_str(), 3);
-        teamNames[i][3] = '\0';
+        strncpy(teamNames[i], savedName.c_str(), 11);
+        teamNames[i][11] = '\0';
+        
+        // Load Color
+        String colorKey = "color" + String(i);
+        teamColors[i] = preferences.getInt(colorKey.c_str(), teamColors[i]);
     }
+    
+    // Load Brightness
+    int bright = preferences.getInt("bright", 1000);
+    Display_SetBrightness(bright);
 }
 
 void Scoreboard_Save() {
@@ -61,6 +119,9 @@ void Scoreboard_Save() {
         
         String nameKey = "name" + String(i);
         preferences.putString(nameKey.c_str(), teamNames[i]);
+        
+        String colorKey = "color" + String(i);
+        preferences.putInt(colorKey.c_str(), teamColors[i]);
     }
 }
 
@@ -85,68 +146,113 @@ void Scoreboard_SubPoints(int cmd) {
     if (teamsScore[timeID] < 0) teamsScore[timeID] = 0;
 }
 
-// Renderização Fixa para os 4 times (128x32)
-void Scoreboard_DrawBoxes() {
-    // Linha horizontal dividindo Nomes e Pontos
-    for (int x = 0; x < 128; x++) {
-        Display_PutPixel(x, 15, cyan);
-    }
-    // Linhas verticais separando os 4 times
-    for (int y = 0; y < 32; y++) {
-        Display_PutPixel(31, y, cyan);
-        Display_PutPixel(63, y, cyan);
-        Display_PutPixel(95, y, cyan);
-    }
-}
-
 void Scoreboard_DrawTeams() {
-    int y_cima = 3;
-    for(int i = 0; i < 4; i++) {
-        int x_start = i * 32;
-        // Centralização do texto no bloco (3 letras = 32 pixels, cada letra é 10px, +1 espaco = 11px per char -> total 31px. Sobra 1px.
-        int char_spacing = 11;
+    int y_cima = 2; // Offset vertical para a nova fonte 7x10
+    int blockW = 128 / numTeams;
+    
+    for(int i = 0; i < numTeams; i++) {
+        int len = strlen(teamNames[i]);
+        if (len == 0) continue;
         
-        for(int c = 0; c < 3; c++) {
-            if(teamNames[i][c] != '\0') {
-                // Desenha a letra convertendo para upper caso precise, mas o painel ja espera char normal
-                Display_DrawChar(teamNames[i][c], x_start + (c * char_spacing), y_cima, teamColors[i]);
-            }
+        // Cada letra tem 7px + 1px espaco = 8px (exceto a ultima)
+        int stringWidth = len * 8 - 1;
+        
+        // Centralização horizontal matemática dentro do bloco
+        int x_start = (i * blockW) + ((blockW - stringWidth) / 2);
+        
+        for(int c = 0; c < len; c++) {
+            Display_DrawChar7x10(teamNames[i][c], x_start + (c * 8), y_cima, teamColors[i]);
         }
     }
 }
 
-void renderNumberInBox(int score, int blockX, int y, int color) {
+void renderNumberInBox(int score, int blockX, int blockW, int y, int color) {
     int milhares = score / 1000;
     int centenas = (score % 1000) / 100;
     int dezenas  = (score % 100) / 10;
     int unidades = score % 10;
     
-    // Auto-centralização dentro de um bloco de 32 pixels
-    // Largura total de 4 digitos = 29px (5+3+5+3+5+3+5). Sobra 1.5px de lado
-    if (score >= 1000) {
-        Display_DrawDigit(milhares, blockX + 1, y, color);
-        Display_DrawDigit(centenas, blockX + 9, y, color);
-        Display_DrawDigit(dezenas,  blockX + 17, y, color);
-        Display_DrawDigit(unidades, blockX + 25, y, color);
-    } else if (score >= 100) {
-        // 3 digitos = 21px. Sobra 5.5px -> offset 5
-        Display_DrawDigit(centenas, blockX + 5, y, color);
-        Display_DrawDigit(dezenas,  blockX + 13, y, color);
-        Display_DrawDigit(unidades, blockX + 21, y, color);
-    } else if (score >= 10) {
-        // 2 digitos = 13px. Sobra 9.5px -> offset 9
-        Display_DrawDigit(dezenas,  blockX + 9, y, color);
-        Display_DrawDigit(unidades, blockX + 17, y, color);
+    int numDigits = (score >= 1000) ? 4 : (score >= 100) ? 3 : (score >= 10) ? 2 : 1;
+    int strW = numDigits * 6 - 1;
+    
+    int dx = blockX + (blockW - strW) / 2;
+    
+    if (numDigits == 4) {
+        Display_DrawDigit(milhares, dx, y, color); dx += 6;
+        Display_DrawDigit(centenas, dx, y, color); dx += 6;
+        Display_DrawDigit(dezenas,  dx, y, color); dx += 6;
+        Display_DrawDigit(unidades, dx, y, color);
+    } else if (numDigits == 3) {
+        Display_DrawDigit(centenas, dx, y, color); dx += 6;
+        Display_DrawDigit(dezenas,  dx, y, color); dx += 6;
+        Display_DrawDigit(unidades, dx, y, color);
+    } else if (numDigits == 2) {
+        Display_DrawDigit(dezenas,  dx, y, color); dx += 6;
+        Display_DrawDigit(unidades, dx, y, color);
     } else {
-        // 1 digito = 5px. Sobra 13.5px -> offset 13
-        Display_DrawDigit(unidades, blockX + 13, y, color);
+        Display_DrawDigit(unidades, dx, y, color);
     }
 }
 
 void Scoreboard_DrawScores() {
     int y_score = 19;
-    renderNumberInBox(teamsScore[0], 0,  y_score, white);
-    renderNumberInBox(teamsScore[1], 32, y_score, white);
-    renderNumberInBox(teamsScore[2], 64, y_score, white);
-    renderNumberInBox(teamsScore[3], 96, y_score, white);
+    int blockW = 128 / numTeams;
+    
+    for (int i = 0; i < numTeams; i++) {
+        renderNumberInBox(teamsScore[i], i * blockW, blockW, y_score, white);
+    }
+}
+
+void Scoreboard_DrawTestPattern() {
+    if (testMode == 0) return;
+    
+    unsigned long now = millis();
+    
+    if (testMode == 1) { // 1 = Colunas
+        if (now - lastTestUpdate > 20) { // Velocidade da varredura
+            testFrame++;
+            if (testFrame >= 128) testFrame = 0;
+            lastTestUpdate = now;
+            Display_Clear();
+            for (int y = 0; y < 32; y++) {
+                Display_PutPixel(testFrame, y, white);
+            }
+        }
+    } 
+    else if (testMode == 2) { // 2 = Linhas
+        if (now - lastTestUpdate > 50) {
+            testFrame++;
+            if (testFrame >= 32) testFrame = 0;
+            lastTestUpdate = now;
+            Display_Clear();
+            for (int x = 0; x < 128; x++) {
+                Display_PutPixel(x, testFrame, white);
+            }
+        }
+    }
+    else if (testMode == 3) { // 3 = Pixel a Pixel
+        if (now - lastTestUpdate > 2) {
+            testFrame++;
+            if (testFrame >= 128 * 32) testFrame = 0;
+            lastTestUpdate = now;
+            Display_Clear();
+            int px = testFrame % 128;
+            int py = testFrame / 128;
+            Display_PutPixel(px, py, white);
+        }
+    }
+    else if (testMode == 4) { // 4 = Cores
+        if (now - lastTestUpdate > 1000) {
+            testFrame++;
+            if (testFrame >= 4) testFrame = 0;
+            lastTestUpdate = now;
+            Display_Clear();
+            int color = (testFrame == 0) ? red : (testFrame == 1) ? green : (testFrame == 2) ? blue : white;
+            for (int x = 0; x < 128; x++) {
+                for (int y = 0; y < 32; y++) {
+                    Display_PutPixel(x, y, color);
+                }
+            }
+        }
+    }
 }

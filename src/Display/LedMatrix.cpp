@@ -7,6 +7,18 @@
 // 128 colunas (X) x 32 linhas (Y)
 uint8_t ledBuffer[128][32];
 
+int displayBrightnessUs = 1000;
+
+const uint8_t* Display_GetBuffer() {
+    return (const uint8_t*)ledBuffer;
+}
+
+void Display_SetBrightness(int brightness_us) {
+    if (brightness_us < 1) brightness_us = 1;
+    if (brightness_us > 2000) brightness_us = 2000;
+    displayBrightnessUs = brightness_us;
+}
+
 // Converte enum Colors para máscara RGB (bit 0 = R, bit 1 = G, bit 2 = B)
 uint8_t colorToRgb(int color) {
     switch (color) {
@@ -75,13 +87,30 @@ void Display_TestPattern(int offset_x) {
 }
 
 void Display_DrawChar(char c, int x, int y, int color) {
+    if (c >= 'a' && c <= 'z') c -= 32; // Uppercase
     int letra = c - 'A'; 
     if (letra < 0 || letra > 25) return;
     
-    for (size_t i = 0; i < 10; i++) {
-        for (size_t j = 0; j < 10; j++) {
-            if (pgm_read_byte(&(alfabeto[letra][10 * i + j]))) {
-                Display_PutPixel(j + x, i + y, color);
+    for (size_t i = 0; i < 5; i++) { // 5 colunas
+        uint8_t col_data = pgm_read_byte(&(font5x7_A_Z[letra][i]));
+        for (size_t j = 0; j < 7; j++) { // 7 linhas (bits)
+            if (col_data & (1 << j)) {
+                Display_PutPixel(x + i, y + j, color);
+            }
+        }
+    }
+}
+
+void Display_DrawChar7x10(char c, int x, int y, int color) {
+    if (c >= 'a' && c <= 'z') c -= 32; // Uppercase
+    int letra = c - 'A'; 
+    if (letra < 0 || letra > 25) return;
+    
+    for (size_t j = 0; j < 10; j++) { // 10 linhas
+        uint8_t row_data = pgm_read_byte(&(font7x10_A_Z[letra][j]));
+        for (size_t i = 0; i < 7; i++) { // 7 colunas (bits)
+            if (row_data & (1 << i)) {
+                Display_PutPixel(x + (6 - i), y + j, color);
             }
         }
     }
@@ -90,19 +119,20 @@ void Display_DrawChar(char c, int x, int y, int color) {
 void Display_DrawDigit(int numero, int x, int y, int color) {
     if(numero < 0 || numero > 9) return;
     
-    for (size_t i = 0; i < 10; i++) {
-        for (size_t j = 0; j < 5; j++) {
-            if (pgm_read_byte(&(digitosAlg[numero][5 * i + j]))) {
-                Display_PutPixel(j + x, i + y, color);
+    for (size_t i = 0; i < 5; i++) {
+        uint8_t col_data = pgm_read_byte(&(font5x7_0_9[numero][i]));
+        for (size_t j = 0; j < 7; j++) {
+            if (col_data & (1 << j)) {
+                Display_PutPixel(x + i, y + j, color);
             }
         }
     }
 }
 
 void Display_ClearCharArea(int x, int y, int color) {
-    for (size_t i = 0; i < 10; i++) {
-        for (size_t j = 0; j < 5; j++) {
-            Display_ClearPixel(j + x, i + y, color);
+    for (size_t i = 0; i < 5; i++) {
+        for (size_t j = 0; j < 7; j++) {
+            Display_ClearPixel(x + i, y + j, color);
         }
     }
 }
@@ -149,7 +179,7 @@ void Display_Update() {
     HAL_LatchPanel();
     HAL_SetLinesPar();
     HAL_EnableDisplay();
-    delayMicroseconds(1000); // 1ms de brilho 
+    delayMicroseconds(displayBrightnessUs);
     HAL_DisableLines();
 
     // SCAN 1: Linhas Ímpares (A=HIGH, B=LOW)
@@ -183,6 +213,6 @@ void Display_Update() {
     HAL_LatchPanel();
     HAL_SetLinesImpar();
     HAL_EnableDisplay();
-    delayMicroseconds(1000); // 1ms de brilho
+    delayMicroseconds(displayBrightnessUs);
     HAL_DisableLines(); // <-- Desliga ao final para evitar chuviscos e fantasmas
 }
