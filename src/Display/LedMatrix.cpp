@@ -87,6 +87,33 @@ void Display_TestPattern(int offset_x) {
 }
 
 void Display_DrawChar(char c, int x, int y, int color) {
+    if (c == ' ') return; // Espaço não desenha nada
+
+    if (c == ':') {
+        uint8_t col_data[5] = {0x00, 0x00, 0x14, 0x00, 0x00};
+        for (size_t i = 0; i < 5; i++) {
+            for (size_t j = 0; j < 7; j++) {
+                if (col_data[i] & (1 << j)) {
+                    Display_PutPixel(x + i, y + j, color);
+                }
+            }
+        }
+        return;
+    }
+
+    if (c >= '0' && c <= '9') {
+        int num = c - '0';
+        for (size_t i = 0; i < 5; i++) {
+            uint8_t col_data = pgm_read_byte(&(font5x7_0_9[num][i]));
+            for (size_t j = 0; j < 7; j++) {
+                if (col_data & (1 << j)) {
+                    Display_PutPixel(x + i, y + j, color);
+                }
+            }
+        }
+        return;
+    }
+
     if (c >= 'a' && c <= 'z') c -= 32; // Uppercase
     int letra = c - 'A'; 
     if (letra < 0 || letra > 25) return;
@@ -102,6 +129,33 @@ void Display_DrawChar(char c, int x, int y, int color) {
 }
 
 void Display_DrawChar7x10(char c, int x, int y, int color) {
+    if (c == ' ') return; // Espaço em branco
+
+    if (c == ':') {
+        uint8_t row_data[10] = {0,0,0, 0x08, 0x08, 0, 0x08, 0x08, 0,0};
+        for (size_t j = 0; j < 10; j++) {
+            for (size_t i = 0; i < 7; i++) {
+                if (row_data[j] & (1 << i)) {
+                    Display_PutPixel(x + (6 - i), y + j, color);
+                }
+            }
+        }
+        return;
+    }
+
+    if (c >= '0' && c <= '9') {
+        int num = c - '0';
+        for (size_t j = 0; j < 10; j++) {
+            uint8_t row_data = pgm_read_byte(&(font7x10_0_9[num][j]));
+            for (size_t i = 0; i < 7; i++) {
+                if (row_data & (1 << i)) {
+                    Display_PutPixel(x + (6 - i), y + j, color);
+                }
+            }
+        }
+        return;
+    }
+
     if (c >= 'a' && c <= 'z') c -= 32; // Uppercase
     int letra = c - 'A'; 
     if (letra < 0 || letra > 25) return;

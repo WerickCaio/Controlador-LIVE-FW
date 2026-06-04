@@ -23,5 +23,9 @@ void Scoreboard_SetTestMode(int mode);
 int Scoreboard_GetTestMode();
 void Scoreboard_DrawTestPattern();
 
+void Scoreboard_SetTargetTime(long targetTimestamp);
+long Scoreboard_GetTargetTime();
+void Scoreboard_DrawCountdown();
+
 void Scoreboard_DrawTeams();
 void Scoreboard_DrawScores();

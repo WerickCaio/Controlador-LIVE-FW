@@ -2,8 +2,10 @@
 #include "../Display/LedMatrix.h" 
 #include <Arduino.h>
 #include <Preferences.h>
+#include "TimeCalculator.h"
+#include <sys/time.h>
 
-Preferences preferences;
+static Preferences preferences;
 
 static int numTeams = 4;
 static int teamsScore[4] = {0, 0, 0, 0};
@@ -13,6 +15,9 @@ static int teamColors[4] = {red, blue, yellow, green};
 static int testMode = 0;
 static int testFrame = 0;
 static unsigned long lastTestUpdate = 0;
+
+static long countdownTarget = 0;
+static int displayBrightnessUs = 1000;
 
 void Scoreboard_SetTestMode(int mode) {
     testMode = mode;
@@ -36,18 +41,20 @@ int Scoreboard_GetTeamColor(int teamId) {
 }
 
 void Scoreboard_SetBrightness(int brightness) {
-    preferences.putInt("bright", brightness);
+    displayBrightnessUs = brightness;
     Display_SetBrightness(brightness);
 }
 
 int Scoreboard_GetBrightness() {
-    return preferences.getInt("bright", 1000);
+    return displayBrightnessUs;
 }
 
 void Scoreboard_SetNumTeams(int num) {
     if (num >= 2 && num <= 4) {
         numTeams = num;
+        preferences.begin("acamp", false);
         preferences.putInt("numTeams", num);
+        preferences.end();
         Scoreboard_Clear();
     }
 }
@@ -89,30 +96,30 @@ void Scoreboard_Init() {
     
     const char* defaultNames[4] = {"BUS", "LAN", "WOO", "RAI"};
     for (int i = 0; i < 4; i++) {
-        // Load Score
         String scoreKey = "score" + String(i);
         teamsScore[i] = preferences.getInt(scoreKey.c_str(), 0);
         if (teamsScore[i] < 0 || teamsScore[i] > 9950) {
             teamsScore[i] = 0;
         }
         
-        // Load Name
         String nameKey = "name" + String(i);
         String savedName = preferences.getString(nameKey.c_str(), defaultNames[i]);
         strncpy(teamNames[i], savedName.c_str(), 11);
         teamNames[i][11] = '\0';
         
-        // Load Color
-        String colorKey = "color" + String(i);
+        String colorKey = "col" + String(i);
         teamColors[i] = preferences.getInt(colorKey.c_str(), teamColors[i]);
     }
     
-    // Load Brightness
-    int bright = preferences.getInt("bright", 1000);
-    Display_SetBrightness(bright);
+    displayBrightnessUs = preferences.getInt("bright", 1000);
+    countdownTarget = preferences.getLong("cdTarget", 0);
+    
+    Display_SetBrightness(displayBrightnessUs);
+    preferences.end();
 }
 
 void Scoreboard_Save() {
+    preferences.begin("acamp", false);
     for (int i = 0; i < 4; i++) {
         String scoreKey = "score" + String(i);
         preferences.putInt(scoreKey.c_str(), teamsScore[i]);
@@ -120,9 +127,21 @@ void Scoreboard_Save() {
         String nameKey = "name" + String(i);
         preferences.putString(nameKey.c_str(), teamNames[i]);
         
-        String colorKey = "color" + String(i);
+        String colorKey = "col" + String(i);
         preferences.putInt(colorKey.c_str(), teamColors[i]);
     }
+    preferences.putInt("bright", displayBrightnessUs);
+    preferences.putLong("cdTarget", countdownTarget);
+    preferences.end();
+}
+
+void Scoreboard_SetTargetTime(long targetTimestamp) {
+    countdownTarget = targetTimestamp;
+    Scoreboard_Save();
+}
+
+long Scoreboard_GetTargetTime() {
+    return countdownTarget;
 }
 
 void Scoreboard_Clear() {
@@ -147,17 +166,14 @@ void Scoreboard_SubPoints(int cmd) {
 }
 
 void Scoreboard_DrawTeams() {
-    int y_cima = 2; // Offset vertical para a nova fonte 7x10
+    int y_cima = 2; 
     int blockW = 128 / numTeams;
     
     for(int i = 0; i < numTeams; i++) {
         int len = strlen(teamNames[i]);
         if (len == 0) continue;
         
-        // Cada letra tem 7px + 1px espaco = 8px (exceto a ultima)
         int stringWidth = len * 8 - 1;
-        
-        // Centralização horizontal matemática dentro do bloco
         int x_start = (i * blockW) + ((blockW - stringWidth) / 2);
         
         for(int c = 0; c < len; c++) {
@@ -254,5 +270,67 @@ void Scoreboard_DrawTestPattern() {
                 }
             }
         }
+    }
+    else if (testMode == 5) { // 5 = Easter Egg (Desenho Livre)
+        // Não apaga a tela, permite edição livre via API de Pixels
+    }
+}
+
+void Scoreboard_DrawCountdown() {
+    static unsigned long lastDrawMs = 0;
+    if (millis() - lastDrawMs < 1000) return; // Atualiza apenas 1x por segundo
+    lastDrawMs = millis();
+
+    Display_Clear();
+    
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    long currentTimestamp = tv.tv_sec;
+    
+    // Se a data de base ainda é o UNIX Epoch (antes de 2024), significa que o celular não sincronizou
+    if (currentTimestamp < 1704067200) { 
+        // 1704067200 = 01/01/2024
+        const char* msg = "AGUARDANDO";
+        const char* msg2 = "SYNC";
+        
+        int x1 = (128 - (10 * 6)) / 2;
+        int x2 = (128 - (4 * 6)) / 2;
+        
+        for (int i = 0; i < 10; i++) {
+            Display_DrawChar(msg[i], x1 + (i * 6), 5, yellow);
+        }
+        for (int i = 0; i < 4; i++) {
+            Display_DrawChar(msg2[i], x2 + (i * 6), 18, yellow);
+        }
+        return;
+    }
+
+    TimeCalculator tc;
+    tc.calculateDifference(currentTimestamp, countdownTarget);
+    
+    int m = tc.getMonths();
+    int d = tc.getDays();
+    int hr = tc.getHours();
+    int min = tc.getMinutes();
+    int sec = tc.getSeconds();
+    
+    char line1[32];
+    sprintf(line1, "%02d MESES %02d DIAS", m, d);
+    
+    char line2[32];
+    sprintf(line2, "%02d:%02d:%02d", hr, min, sec);
+    
+    // Centralizar linha 1 (Fonte 5x7 -> largura = len * 6)
+    int len1 = strlen(line1);
+    int x1 = (128 - (len1 * 6)) / 2;
+    for (int i = 0; i < len1; i++) {
+        Display_DrawChar(line1[i], x1 + (i * 6), 2, cyan);
+    }
+    
+    // Centralizar linha 2 (Fonte 7x10 -> largura = len * 8)
+    int len2 = strlen(line2);
+    int x2 = (128 - (len2 * 8)) / 2;
+    for (int i = 0; i < len2; i++) {
+        Display_DrawChar7x10(line2[i], x2 + (i * 8), 16, white);
     }
 }

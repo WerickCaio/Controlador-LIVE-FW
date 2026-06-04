@@ -30,10 +30,14 @@ void TaskWeb(void *pvParameters)
     {
         WebServer_GetCommand(); // Processa requisições HTTP do Dashboard
 
-        // Verifica se estamos em Modo de Teste de Hardware
+        // Verifica se estamos em Modo de Teste de Hardware ou Contagem Regressiva
         if (Scoreboard_GetTestMode() != 0)
         {
-            Scoreboard_DrawTestPattern();
+            if (Scoreboard_GetTestMode() == 6) {
+                Scoreboard_DrawCountdown();
+            } else {
+                Scoreboard_DrawTestPattern();
+            }
         }
         // Se alguma API web alterou os pontos ou nomes, redesenhamos o painel
         else if (WebServer_NeedsRedraw())

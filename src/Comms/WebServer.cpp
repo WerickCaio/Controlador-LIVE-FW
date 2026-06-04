@@ -87,6 +87,7 @@ void handleRoot() {
     <div class="tabs">
         <div class="tab active" onclick="switchTab('placar', this)">🎮 Placar</div>
         <div class="tab" onclick="switchTab('config', this)">⚙️ Configurações</div>
+        <div class="tab" onclick="switchTab('timer', this)">⏳ Cronômetro</div>
         <div class="tab" onclick="switchTab('diag', this)">🛠️ Diagnóstico</div>
     </div>
 
@@ -184,6 +185,21 @@ void handleRoot() {
         </div>
     </div>
 
+    <!-- TELA DO CRONÔMETRO -->
+    <div id="timer" class="content">
+        <h2 style="margin-top:0;">Contagem Regressiva</h2>
+        <p style="text-align:center; max-width:400px; color:#aaa; font-size:0.95rem; margin-bottom:20px;">O relógio interno foi sincronizado com seu celular agora mesmo. Defina o Alvo e ative!</p>
+        <div class="config-list">
+            <div class="config-item">
+                <label>Data/Hora do Acampamento</label>
+                <input type="datetime-local" id="inpTargetDate" style="width: 100%; box-sizing: border-box;" />
+            </div>
+            <button class="btn-save" onclick="saveTimer()">SALVAR ALVO E ATIVAR CRONÔMETRO</button>
+            <button class="btn-save" style="margin-top:10px; background:#3b82f6;" onclick="syncTime()">🔄 FORÇAR SYNC DO RELÓGIO</button>
+            <button class="btn-reset" style="margin-top:20px; background:#ef4444;" onclick="setTest(0)">🛑 VOLTAR PARA PLACAR</button>
+        </div>
+    </div>
+
     <script>
         const NUM_TEAMS_SERVER = )rawliteral" + String(num) + R"rawliteral(;
 
@@ -226,10 +242,37 @@ void handleRoot() {
 
         function setTest(mode) {
             fetch('/api/setTestMode?mode=' + mode).then(() => {
-                if(mode == 0) logActivity("Modo de Teste de Hardware DESLIGADO.");
+                if(mode == 0) logActivity("Modo do painel retornado para PLACAR.");
+                else if (mode == 6) logActivity("Contagem Regressiva ATIVADA na tela.");
                 else logActivity("Modo de Teste " + mode + " ATIVADO no painel.");
             });
         }
+        
+        function syncTime() {
+            let t = Math.floor(Date.now() / 1000);
+            fetch('/api/syncTime?t=' + t).then(() => logActivity("Relógio sincronizado com o celular."));
+        }
+        
+        function saveTimer() {
+            let dt = document.getElementById('inpTargetDate').value;
+            if(!dt) { alert("Escolha uma data e hora válida."); return; }
+            let t = Math.floor(new Date(dt).getTime() / 1000);
+            fetch('/api/setTargetTime?t=' + t).then(() => {
+                logActivity("Data alvo configurada!");
+                setTest(6); // Entra no modo Acampamento
+            });
+        }
+
+        // On Load Logic
+        syncTime();
+        fetch('/api/getTargetTime').then(r=>r.text()).then(txt => {
+            let t = parseInt(txt);
+            if(t > 0) {
+                let d = new Date(t * 1000);
+                d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+                document.getElementById('inpTargetDate').value = d.toISOString().slice(0,16);
+            }
+        });
 
         function saveConfig() {
             let n = parseInt(document.getElementById('inpNumTeams').value);
@@ -337,6 +380,34 @@ void handleSetNumTeams() {
     }
 }
 
+void handleSyncTime() {
+    if (server.hasArg("t")) {
+        long t = server.arg("t").toInt();
+        struct timeval tv;
+        tv.tv_sec = t;
+        tv.tv_usec = 0;
+        settimeofday(&tv, NULL);
+        server.send(200, "text/plain", "OK");
+    } else {
+        server.send(400, "text/plain", "Bad Request");
+    }
+}
+
+void handleSetTargetTime() {
+    if (server.hasArg("t")) {
+        long t = server.arg("t").toInt();
+        Scoreboard_SetTargetTime(t);
+        server.send(200, "text/plain", "OK");
+    } else {
+        server.send(400, "text/plain", "Bad Request");
+    }
+}
+
+void handleGetTargetTime() {
+    long t = Scoreboard_GetTargetTime();
+    server.send(200, "text/plain", String(t));
+}
+
 void handleSetTestMode() {
     if (server.hasArg("mode")) {
         int mode = server.arg("mode").toInt();
@@ -406,12 +477,160 @@ void handleScreen() {
     client.write(buf, 128 * 32);
 }
 
+void handleDrawing() {
+    String html = R"rawliteral(
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+        <title>ACAMP VOX - Studio Criativo</title>
+        <style>
+            body { background: #121212; color: #fff; text-align: center; font-family: sans-serif; margin: 0; padding: 10px; touch-action: none; }
+            canvas { width: 100%; max-width: 1024px; image-rendering: pixelated; border: 2px solid #ea580c; border-radius: 8px; background: #000; touch-action: none; margin-top:10px;}
+            .palette { display: flex; justify-content: center; gap: 10px; margin: 15px 0; flex-wrap: wrap; }
+            .color-btn { width: 40px; height: 40px; border-radius: 50%; border: 3px solid #333; cursor: pointer; transition: 0.2s;}
+            .color-btn.selected { border-color: #fff; transform: scale(1.2); }
+            .btn-clear { background: #ef4444; border: none; color: white; padding: 12px 24px; font-size: 1rem; font-weight: bold; border-radius: 6px; cursor: pointer; margin-top:20px;}
+        </style>
+    </head>
+    <body>
+        <h2 style="margin-bottom:0;">🎨 Studio Criativo</h2>
+        <div class="palette">
+            <div class="color-btn selected" style="background:#000;" onclick="setColor(7, this)"></div>
+            <div class="color-btn" style="background:#f00;" onclick="setColor(0, this)"></div>
+            <div class="color-btn" style="background:#0f0;" onclick="setColor(2, this)"></div>
+            <div class="color-btn" style="background:#00f;" onclick="setColor(1, this)"></div>
+            <div class="color-btn" style="background:#ff0;" onclick="setColor(3, this)"></div>
+            <div class="color-btn" style="background:#0ff;" onclick="setColor(4, this)"></div>
+            <div class="color-btn" style="background:#f0f;" onclick="setColor(5, this)"></div>
+            <div class="color-btn" style="background:#fff;" onclick="setColor(6, this)"></div>
+        </div>
+        <canvas id="canvas" width="128" height="32"></canvas>
+        <br>
+        <button class="btn-clear" onclick="clearScreen()">🗑️ Limpar Tela</button>
+        <br><br>
+        <a href="/" style="color:#aaa; text-decoration:none; font-weight:bold;">⬅️ Voltar ao Placar</a>
+
+        <script>
+            // Ativa o modo de desenho assim que entra na pagina
+            fetch('/api/setTestMode?mode=5'); 
+            
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            let currentColor = 7; // Começa com a borracha (black = enum 7)
+            let isDrawing = false;
+            
+            // Map de Bits RGB lidos direto do ledBuffer (Para renderizar o /api/screen inicial)
+            const rgbMap = ['#000', '#f00', '#0f0', '#ff0', '#00f', '#f0f', '#0ff', '#fff'];
+
+            // Map do Enum C++ para a cor visual no Canvas HTML
+            const enumToColor = {
+                0: '#f00', 1: '#00f', 2: '#0f0', 3: '#ff0', 
+                4: '#0ff', 5: '#f0f', 6: '#fff', 7: '#000'
+            };
+
+            // Sincroniza a tela atual
+            fetch('/api/screen').then(r => r.arrayBuffer()).then(buf => {
+                const arr = new Uint8Array(buf);
+                for(let x = 0; x < 128; x++) {
+                    for(let y = 0; y < 32; y++) {
+                        let cIdx = arr[x * 32 + y] & 7;
+                        if(cIdx > 0) {
+                            ctx.fillStyle = rgbMap[cIdx];
+                            ctx.fillRect(x, y, 1, 1);
+                        }
+                    }
+                }
+            });
+
+            function setColor(c, el) {
+                currentColor = c;
+                document.querySelectorAll('.color-btn').forEach(btn => btn.classList.remove('selected'));
+                el.classList.add('selected');
+            }
+
+            function clearScreen() {
+                ctx.clearRect(0, 0, 128, 32);
+                fetch('/api/clearScreen');
+            }
+
+            let lastSendTime = 0;
+            
+            function drawPixel(evt) {
+                if (!isDrawing) return;
+                const rect = canvas.getBoundingClientRect();
+                const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+                const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
+                
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = Math.floor((clientX - rect.left) * scaleX);
+                const y = Math.floor((clientY - rect.top) * scaleY);
+
+                if (x >= 0 && x < 128 && y >= 0 && y < 32) {
+                    if (currentColor == 7) { 
+                        ctx.clearRect(x,y,1,1); 
+                    } else { 
+                        ctx.fillStyle = enumToColor[currentColor]; 
+                        ctx.fillRect(x, y, 1, 1); 
+                    }
+
+                    const now = Date.now();
+                    if (now - lastSendTime > 10) { 
+                        lastSendTime = now;
+                        fetch('/api/setPixel?x=' + x + '&y=' + y + '&c=' + currentColor);
+                    }
+                }
+            }
+
+            canvas.addEventListener('mousedown', (e) => { isDrawing = true; drawPixel(e); });
+            canvas.addEventListener('mousemove', drawPixel);
+            window.addEventListener('mouseup', () => isDrawing = false);
+
+            canvas.addEventListener('touchstart', (e) => { isDrawing = true; drawPixel(e); e.preventDefault(); }, {passive: false});
+            canvas.addEventListener('touchmove', (e) => { drawPixel(e); e.preventDefault(); }, {passive: false});
+            window.addEventListener('touchend', () => isDrawing = false);
+        </script>
+    </body>
+    </html>
+    )rawliteral";
+    server.send(200, "text/html", html);
+}
+
+void handleSetPixel() {
+    if (server.hasArg("x") && server.hasArg("y") && server.hasArg("c")) {
+        int x = server.arg("x").toInt();
+        int y = server.arg("y").toInt();
+        int c = server.arg("c").toInt();
+        
+        Display_ClearPixel(x, y, black); // Apaga os bits anteriores
+        if (c != black) {
+            Display_PutPixel(x, y, c);
+        }
+        server.send(200, "text/plain", "OK");
+    } else {
+        server.send(400, "text/plain", "Bad Request");
+    }
+}
+
+void handleClearScreen() {
+    Display_Clear();
+    server.send(200, "text/plain", "OK");
+}
+
 void WebServer_Init() {
     WiFi.softAP(ssid, password);
     
     server.on("/", handleRoot);
     server.on("/mirror", handleMirror);
+    server.on("/drawing", handleDrawing);
     server.on("/api/screen", handleScreen);
+    server.on("/api/setPixel", handleSetPixel);
+    server.on("/api/clearScreen", handleClearScreen);
+    server.on("/api/syncTime", handleSyncTime);
+    server.on("/api/setTargetTime", handleSetTargetTime);
+    server.on("/api/getTargetTime", handleGetTargetTime);
     server.on("/api/updateScore", handleUpdateScore);
     server.on("/api/updateName", handleUpdateName);
     server.on("/api/setColor", handleSetColor);
