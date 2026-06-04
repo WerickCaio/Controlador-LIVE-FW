@@ -1,83 +1,67 @@
 #include "LedMatrix.h"
 #include "../Hardware/Hal.h" 
 #include "Drawing.h"         
+#include "../include/Config.h" // Para as definições de PIN_*
 
-uint64_t ledPanelRgb[2][96]; // Memória dobrada (32 linhas * 3 cores)
+// Novo Framebuffer simplificado: 1 byte por pixel (3 bits usados: RGB)
+// 128 colunas (X) x 32 linhas (Y)
+uint8_t ledBuffer[128][32];
+
+// Converte enum Colors para máscara RGB (bit 0 = R, bit 1 = G, bit 2 = B)
+uint8_t colorToRgb(int color) {
+    switch (color) {
+        case red:    return 0b001;
+        case green:  return 0b010;
+        case blue:   return 0b100;
+        case yellow: return 0b011;
+        case cyan:   return 0b110;
+        case purple: return 0b101;
+        case white:  return 0b111;
+        case black:  return 0b000;
+        default:     return 0b000;
+    }
+}
 
 void Display_PutPixel(int x, int y, int color) { 
     if (x < 0 || x > 127 || y < 0 || y > 31) return; 
-
-    uint64_t unidade = 1;
-    uint64_t tempar = 63 - (x % 64);
-    int multiplier = 0;
-    
-    switch (color) {
-        case red:
-            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-        case green:
-            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-        case blue:
-            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-        case yellow:
-            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-        case cyan:
-            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-        case purple:
-            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-        case white:
-            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar));
-            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] |= ((unidade << tempar)); break;
-    }
+    ledBuffer[x][y] |= colorToRgb(color);
 }
 
 void Display_ClearPixel(int x, int y, int color) {
     if (x < 0 || x > 127 || y < 0 || y > 31) return;
-
-    uint64_t unidade = 1;
-    uint64_t tempar = 63 - (x % 64);
-    int multiplier = 0;
     
-    switch (color) {
-        case red:
-            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar)); break;
-        case green:
-            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar)); break;
-        case blue:
-            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar)); break;
-        case white:
-            multiplier = 0; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
-            multiplier = 1; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar));
-            multiplier = 2; ledPanelRgb[1 - x / 64][y + (multiplier * 32)] &= (~(unidade << tempar)); break;
+    // Se a cor passada for black, limpa todos os bits
+    if (color == black) {
+        ledBuffer[x][y] = 0;
+    } else {
+        ledBuffer[x][y] &= ~colorToRgb(color);
     }
 }
 
 void Display_Clear() {
-    // Adeus, fantasmas! O memset "zera" toda a matriz de vídeo instantaneamente.
-    memset(ledPanelRgb, 0, sizeof(ledPanelRgb));
+    memset(ledBuffer, 0, sizeof(ledBuffer));
 }
 
 void Display_Init() {
     Display_Clear();
+    // Borda
     for (int i = 0; i < 32; i++) {
         Display_PutPixel(0, i, white);
         Display_PutPixel(127, i, white);
         Display_PutPixel(63, i, white);
         Display_PutPixel(64, i, white);
     }
-    for (int i = 0; i < 64; i++) {
+    for (int i = 0; i < 128; i++) {
         Display_PutPixel(i, 0, white);
-        Display_PutPixel(64 + i, 31, white); 
+        Display_PutPixel(i, 31, white); 
     }
 }
 
 void Display_TestPattern(int offset_x) {
     Display_Clear(); 
 
-    // Desenha na fileira de CIMA (Que está de cabeça para baixo fisicamente)
+    // Desenha na fileira de CIMA (Que está de cabeça para baixo fisicamente, 
+    // mas a lógica nova de mapeamento já espelha na memória por você!)
     Display_DrawChar('C', offset_x + 0, 3, red);
     Display_DrawChar('A', offset_x + 11, 3, red);
     Display_DrawChar('S', offset_x + 22, 3, red);
@@ -124,92 +108,81 @@ void Display_ClearCharArea(int x, int y, int color) {
 }
 
 // ======================================================================
-// VARREDURA SPI CASCATA 128x32
-// ======================================================================
-// ======================================================================
-// VARREDURA SPI CASCATA 128x32 (TOPOLOGIA EM "SERPENTE")
-// Topo: De cabeça para baixo | Base: Normal
-// Fim da Linha (Push 1): Base-Direita (Painel 16)
+// VARREDURA PARALELA VIA GPIO (128x32 - 1/2 Scan)
 // ======================================================================
 void Display_Update() {
     HAL_DisableLines(); 
 
-    // ====================================================
-    // --- LINHAS PARES FÍSICAS (A=1, B=0) ---
-    // ====================================================
-    for (int cores = 2; cores >= 0; cores--) {
+    // SCAN 0: Linhas Pares (A=LOW, B=HIGH)
+    for (int step = 0; step < 1024; step++) {
+        int panel = step / 128;          // 0 a 7
+        int y_idx = (step % 128) / 16;   // 0 a 7
+        int x_idx = step % 16;           // 0 a 15
         
-        // 1. BASE-DIREITA (Normal, painel 0, Y: 16..31)
-        for (int displayID = 0; displayID <= 3; displayID++) {
-            for (int linhas = 16 + cores * 32; linhas <= 30 + cores * 32; linhas += 2) {
-                HAL_SpiTransferNormal((ledPanelRgb[0][linhas] >> (16 * displayID)));
-            }
-        }
+        // CÁLCULO DAS COORDENADAS LÓGICAS (IMAGE X,Y) QUE CORRESPONDEM A ESSE PULSO DO SHIFT REGISTER
+        
+        // Fileira de BAIXO: Encadeamento Normal
+        int x_b = panel * 16 + x_idx;
+        int y_b = 30 - y_idx * 2;
+        
+        // Fileira de CIMA: Encadeamento Normal (Painel desvirado!)
+        int x_t = panel * 16 + x_idx;
+        int y_t = 14 - y_idx * 2;
+        
+        uint8_t upper_color = ledBuffer[x_t][y_t];
+        uint8_t lower_color = ledBuffer[x_b][y_b];
+        
+        // Escreve os bits nas portas (usando digitalWrite por compatibilidade)
+        (upper_color & 0b001) ? digitalWrite(PIN_R1, HIGH) : digitalWrite(PIN_R1, LOW);
+        (upper_color & 0b010) ? digitalWrite(PIN_G1, HIGH) : digitalWrite(PIN_G1, LOW);
+        (upper_color & 0b100) ? digitalWrite(PIN_B1, HIGH) : digitalWrite(PIN_B1, LOW);
 
-        // 2. BASE-ESQUERDA (Normal, painel 1, Y: 16..31)
-        for (int displayID = 0; displayID <= 3; displayID++) {
-            for (int linhas = 16 + cores * 32; linhas <= 30 + cores * 32; linhas += 2) {
-                HAL_SpiTransferNormal((ledPanelRgb[1][linhas] >> (16 * displayID)));
-            }
-        }
+        (lower_color & 0b001) ? digitalWrite(PIN_R2, HIGH) : digitalWrite(PIN_R2, LOW);
+        (lower_color & 0b010) ? digitalWrite(PIN_G2, HIGH) : digitalWrite(PIN_G2, LOW);
+        (lower_color & 0b100) ? digitalWrite(PIN_B2, HIGH) : digitalWrite(PIN_B2, LOW);
 
-        // 3. TOPO-ESQUERDA (Invertido, painel 1, Y: 0..15)
-        // Como o painel está de cabeça para baixo, as linhas pares físicas mapeiam as linhas ÍMPARES da imagem (de trás pra frente)
-        for (int displayID = 3; displayID >= 0; displayID--) {
-            for (int linhas = 15 + cores * 32; linhas >= 1 + cores * 32; linhas -= 2) {
-                HAL_SpiTransferInverted((ledPanelRgb[1][linhas] >> (16 * displayID)));
-            }
-        }
-
-        // 4. TOPO-DIREITA (Invertido, painel 0, Y: 0..15)
-        for (int displayID = 3; displayID >= 0; displayID--) {
-            for (int linhas = 15 + cores * 32; linhas >= 1 + cores * 32; linhas -= 2) {
-                HAL_SpiTransferInverted((ledPanelRgb[0][linhas] >> (16 * displayID)));
-            }
-        }
+        // Pulso de Clock
+        digitalWrite(PIN_CLK, HIGH);
+        digitalWrite(PIN_CLK, LOW);
     }
+
     HAL_LatchPanel();
     HAL_SetLinesPar();
     HAL_EnableDisplay();
-    delay(1); 
+    delayMicroseconds(1000); // 1ms de brilho 
     HAL_DisableLines();
 
-    // ====================================================
-    // --- LINHAS ÍMPARES FÍSICAS (A=0, B=1) ---
-    // ====================================================
-    for (int cores = 2; cores >= 0; cores--) {
+    // SCAN 1: Linhas Ímpares (A=HIGH, B=LOW)
+    for (int step = 0; step < 1024; step++) {
+        int panel = step / 128;
+        int y_idx = (step % 128) / 16;
+        int x_idx = step % 16;
         
-        // 1. BASE-DIREITA (Normal, painel 0, Y: 16..31)
-        for (int displayID = 0; displayID <= 3; displayID++) {
-            for (int linhas = 17 + cores * 32; linhas <= 31 + cores * 32; linhas += 2) {
-                HAL_SpiTransferNormal((ledPanelRgb[0][linhas] >> (16 * displayID)));
-            }
-        }
+        int x_b = panel * 16 + x_idx;
+        int y_b = 31 - y_idx * 2;
+        
+        int x_t = panel * 16 + x_idx;
+        int y_t = 15 - y_idx * 2;
+        
+        uint8_t upper_color = ledBuffer[x_t][y_t];
+        uint8_t lower_color = ledBuffer[x_b][y_b];
+        
+        (upper_color & 0b001) ? digitalWrite(PIN_R1, HIGH) : digitalWrite(PIN_R1, LOW);
+        (upper_color & 0b010) ? digitalWrite(PIN_G1, HIGH) : digitalWrite(PIN_G1, LOW);
+        (upper_color & 0b100) ? digitalWrite(PIN_B1, HIGH) : digitalWrite(PIN_B1, LOW);
 
-        // 2. BASE-ESQUERDA (Normal, painel 1, Y: 16..31)
-        for (int displayID = 0; displayID <= 3; displayID++) {
-            for (int linhas = 17 + cores * 32; linhas <= 31 + cores * 32; linhas += 2) {
-                HAL_SpiTransferNormal((ledPanelRgb[1][linhas] >> (16 * displayID)));
-            }
-        }
+        (lower_color & 0b001) ? digitalWrite(PIN_R2, HIGH) : digitalWrite(PIN_R2, LOW);
+        (lower_color & 0b010) ? digitalWrite(PIN_G2, HIGH) : digitalWrite(PIN_G2, LOW);
+        (lower_color & 0b100) ? digitalWrite(PIN_B2, HIGH) : digitalWrite(PIN_B2, LOW);
 
-        // 3. TOPO-ESQUERDA (Invertido, painel 1, Y: 0..15)
-        // Linhas ímpares físicas mapeiam as linhas PARES da imagem (de trás pra frente)
-        for (int displayID = 3; displayID >= 0; displayID--) {
-            for (int linhas = 14 + cores * 32; linhas >= 0 + cores * 32; linhas -= 2) {
-                HAL_SpiTransferInverted((ledPanelRgb[1][linhas] >> (16 * displayID)));
-            }
-        }
-
-        // 4. TOPO-DIREITA (Invertido, painel 0, Y: 0..15)
-        for (int displayID = 3; displayID >= 0; displayID--) {
-            for (int linhas = 14 + cores * 32; linhas >= 0 + cores * 32; linhas -= 2) {
-                HAL_SpiTransferInverted((ledPanelRgb[0][linhas] >> (16 * displayID)));
-            }
-        }
+        // Pulso de Clock
+        digitalWrite(PIN_CLK, HIGH);
+        digitalWrite(PIN_CLK, LOW);
     }
+
     HAL_LatchPanel();
     HAL_SetLinesImpar();
     HAL_EnableDisplay();
-    delay(1); 
+    delayMicroseconds(1000); // 1ms de brilho
+    HAL_DisableLines(); // <-- Desliga ao final para evitar chuviscos e fantasmas
 }

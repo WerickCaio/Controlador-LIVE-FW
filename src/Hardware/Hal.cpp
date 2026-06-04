@@ -2,78 +2,42 @@
 #include "../include/Config.h"
 
 void HAL_Init() {
+    pinMode(PIN_R1, OUTPUT);
+    pinMode(PIN_G1, OUTPUT);
+    pinMode(PIN_B1, OUTPUT);
+    pinMode(PIN_R2, OUTPUT);
+    pinMode(PIN_G2, OUTPUT);
+    pinMode(PIN_B2, OUTPUT);
+    
     pinMode(PIN_A, OUTPUT);
     pinMode(PIN_B, OUTPUT);
     pinMode(PIN_LAT, OUTPUT);
     pinMode(PIN_OE, OUTPUT);
     pinMode(PIN_CLK, OUTPUT);
-    pinMode(PIN_DATA, OUTPUT);
+    
+    // Desativa o display na inicialização
+    digitalWrite(PIN_OE, HIGH);
     
     EEPROM.begin(512);
-    SPI.begin(PIN_CLK, -1, PIN_DATA, -1);
-}
-
-int HAL_PingHardware() {
-    pinMode(PIN_DATA, OUTPUT);
-    pinMode(PIN_CLK, OUTPUT);
-    pinMode(PIN_OE, OUTPUT);
-    pinMode(PIN_RETORNO, INPUT_PULLDOWN);
-
-    digitalWrite(PIN_OE, HIGH); 
-    digitalWrite(PIN_CLK, LOW);
-    
-    digitalWrite(PIN_DATA, LOW);
-    for(int i = 0; i < 20000; i++) {
-        digitalWrite(PIN_CLK, HIGH); digitalWrite(PIN_CLK, LOW);
-    }
-
-    digitalWrite(PIN_DATA, HIGH);
-    digitalWrite(PIN_CLK, HIGH); digitalWrite(PIN_CLK, LOW);
-    digitalWrite(PIN_DATA, LOW);
-    
-    int contador_de_bits = 1;
-    while(digitalRead(PIN_RETORNO) == LOW && contador_de_bits < 20000) {
-        digitalWrite(PIN_CLK, HIGH); digitalWrite(PIN_CLK, LOW);
-        contador_de_bits++;
-    }
-
-    SPI.end();
-    SPI.begin(PIN_CLK, -1, PIN_DATA, -1);
-    return contador_de_bits;
-}
-
-void HAL_SpiTransferNormal(uint16_t data) {
-    // Reduzimos a velocidade de 4000000 para 500000 para evitar reflexão!
-    SPI.beginTransaction(SPISettings(4000000, LSBFIRST, SPI_MODE0)); 
-    SPI.transfer16(data);
-    SPI.endTransaction();
-}
-
-void HAL_SpiTransferInverted(uint16_t data) {
-    // Reduzimos a velocidade de 4000000 para 500000 para evitar reflexão!
-    SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
-    SPI.transfer16(data);
-    SPI.endTransaction();
 }
 
 void HAL_LatchPanel() {
     digitalWrite(PIN_LAT, HIGH);
+    __asm__ __volatile__ ("nop; nop; nop; nop; nop;");
     digitalWrite(PIN_LAT, LOW);
 }
 
 void HAL_SetLinesPar() {
-    digitalWrite(PIN_A, HIGH);
-    digitalWrite(PIN_B, LOW);
+    digitalWrite(PIN_A, LOW);
+    digitalWrite(PIN_B, HIGH);
 }
 
 void HAL_SetLinesImpar() {
-    digitalWrite(PIN_B, HIGH);
-    digitalWrite(PIN_A, LOW);
+    digitalWrite(PIN_B, LOW);
+    digitalWrite(PIN_A, HIGH);
 }
 
 void HAL_DisableLines() {
-    digitalWrite(PIN_A, HIGH);
-    digitalWrite(PIN_B, HIGH);
     digitalWrite(PIN_OE, HIGH); 
 }
 

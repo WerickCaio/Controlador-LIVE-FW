@@ -5,16 +5,18 @@
 // CONFIGURAÇÕES GLOBAIS E PINOS (ESP32-C3)
 // ======================================================================
 
-// Pinos do Painel de LED (SPI e Controle)
-constexpr int PIN_LAT   = 0;
-constexpr int PIN_OE    = 1;
-constexpr int PIN_B     = 3;
-constexpr int PIN_A     = 4;
-constexpr int PIN_CLK   = 6;
-constexpr int PIN_DATA  = 7;
-
-// Pino do Sonar (Auto-detecção de tamanho do painel)
-constexpr int PIN_RETORNO = 2;
+// Pinos do Painel de LED
+constexpr int PIN_R1 = 11;
+constexpr int PIN_G1 = 12;
+constexpr int PIN_B1 = 10;
+constexpr int PIN_R2 = 7;
+constexpr int PIN_G2 = 15;
+constexpr int PIN_B2 = 6;
+constexpr int PIN_A = 18;
+constexpr int PIN_B = 8;
+constexpr int PIN_CLK = 9;
+constexpr int PIN_LAT = 46;
+constexpr int PIN_OE = 3;
 
 // Pinos de Comunicação Serial (Módulo Bluetooth HC-05)
 constexpr int RX_PIN = 20;

@@ -12,7 +12,7 @@ enum stateMachine
     start,
     idle
 };
-uint8_t panelPlayerState = test_hardware;
+uint8_t panelPlayerState = idle;
 
 enum comandos
 {
@@ -35,9 +35,14 @@ void setup()
     HAL_Init();
 
     Display_Clear();
-    DEBUG_PRINTLN("=== Modo de Teste de Hardware Iniciado ===");
+    DEBUG_PRINTLN("=== Inicializando o Jogo ===");
 
     WebServer_Init(); // Pode inicializar o Wi-Fi sem problemas
+
+    Scoreboard_Init();
+    Scoreboard_DrawTeams();
+    Scoreboard_DrawBoxes();
+    Scoreboard_DrawScores();
 }
 
 void loop()
