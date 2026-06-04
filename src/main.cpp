@@ -6,121 +6,87 @@
 #include "Comms/WebServer.h"
 #include "Game/Scoreboard.h"
 
-enum stateMachine
-{
-    test_hardware,
-    start,
-    idle
-};
-uint8_t panelPlayerState = idle;
+// ====================================================================
+// TASK 1: Atualização do Display (DEDICADA AO CORE 1)
+// ====================================================================
+void TaskDisplay(void *pvParameters) {
+    for (;;) {
+        Display_Update();
+        
+        // Yield pequeno para evitar o acionamento do Watchdog Timer (WDT)
+        // Isso dá 1ms de respiro para o RTOS manter a casa em ordem
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
 
-enum comandos
-{
-    Ir_Para_Idle = 0,
-    Cmd_AddPonto_Inicio = 1,
-    Cmd_AddPonto_Fim = 12,
-    Cmd_SubPonto_Inicio = 13,
-    Cmd_SubPonto_Fim = 24,
-    ZERA_O_PLACAR = 25,
-    GUARDA_O_PLACAR = 26
-};
-
-// --- ADICIONE ESTAS DUAS VARIÁVEIS GLOBAIS LÁ EM CIMA (antes do setup) ---
-int test_x_offset = -40;
-unsigned long lastScrollTime = 0;
+// ====================================================================
+// TASK 0: Servidor Web e Lógica do Jogo (DEDICADA AO CORE 0)
+// ====================================================================
+void TaskWeb(void *pvParameters) {
+    for (;;) {
+        WebServer_GetCommand(); // Processa requisições HTTP do Dashboard
+        
+        // Se alguma API web alterou os pontos ou nomes, redesenhamos o painel
+        if (WebServer_NeedsRedraw()) {
+            Display_Clear();
+            Scoreboard_DrawTeams();
+            Scoreboard_DrawBoxes();
+            Scoreboard_DrawScores();
+        }
+        
+        // Yield generoso (10ms) pois a Web não precisa de tempo real extremo
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
 
 void setup()
 {
+    // Inicialização do Sistema
     Comm_Init();
     HAL_Init();
 
     Display_Clear();
     DEBUG_PRINTLN("=== Inicializando o Jogo ===");
 
-    WebServer_Init(); // Pode inicializar o Wi-Fi sem problemas
+    WebServer_Init(); // Sobe o AP "ACAMP_VOX"
 
+    // Desenha o estado inicial do placar
     Scoreboard_Init();
     Scoreboard_DrawTeams();
     Scoreboard_DrawBoxes();
     Scoreboard_DrawScores();
+
+    // ====================================================================
+    // MULTITHREADING (FreeRTOS)
+    // ====================================================================
+    
+    // Core 0: Ficará com a conectividade Wi-Fi e a lógica HTTP Web
+    xTaskCreatePinnedToCore(
+        TaskWeb,
+        "TaskWeb",
+        8192,
+        NULL,
+        1,       // Prioridade Normal
+        NULL,
+        0        // Core 0
+    );
+
+    // Core 1: Ficará focado APENAS em cuspir os bits pro painel HUB75
+    xTaskCreatePinnedToCore(
+        TaskDisplay,
+        "TaskDisplay",
+        8192,
+        NULL,
+        10,      // Prioridade ALTÍSSIMA
+        NULL,
+        1        // Core 1
+    );
 }
 
 void loop()
 {
-    int comandoRecebido = Comm_GetCommand();
-    if (comandoRecebido == -1)
-    {
-        comandoRecebido = WebServer_GetCommand();
-    }
-
-    switch (panelPlayerState)
-    {
-    case test_hardware:
-        // A cada 80ms, move o texto 1 pixel para a direita
-        if (millis() - lastScrollTime > 80)
-        {
-            test_x_offset++;
-            if (test_x_offset > 128)
-            {
-                test_x_offset = -40; // Volta pro começo
-            }
-
-            Display_TestPattern(test_x_offset);
-            lastScrollTime = millis();
-        }
-
-    case start:
-        if (comandoRecebido == Ir_Para_Idle)
-        {
-            DEBUG_PRINTLN("[START] Comando 0 Recebido. Saindo do teste e indo pro Jogo!");
-
-            Scoreboard_Init();
-            Display_Clear();
-            Scoreboard_DrawTeams();
-            Scoreboard_DrawBoxes();
-            Scoreboard_DrawScores();
-
-            panelPlayerState = idle;
-        }
-        break;
-
-    case idle:
-        bool pontuacaoAlterada = false;
-
-        if (comandoRecebido >= Cmd_AddPonto_Inicio && comandoRecebido <= Cmd_AddPonto_Fim)
-        {
-            Scoreboard_AddPoints(comandoRecebido - 1);
-            pontuacaoAlterada = true;
-        }
-        else if (comandoRecebido >= Cmd_SubPonto_Inicio && comandoRecebido <= Cmd_SubPonto_Fim)
-        {
-            Scoreboard_SubPoints(comandoRecebido - 13);
-            pontuacaoAlterada = true;
-        }
-        else if (comandoRecebido == ZERA_O_PLACAR)
-        {
-            Scoreboard_Clear();
-            pontuacaoAlterada = true;
-        }
-        else if (comandoRecebido == GUARDA_O_PLACAR)
-        {
-            Scoreboard_Save();
-            DEBUG_PRINTLN(">>> Placar Salvo na Memoria!");
-        }
-        else if (comandoRecebido == Ir_Para_Idle)
-        {
-            ESP.restart();
-        }
-
-        if (pontuacaoAlterada)
-        {
-            Display_Clear();
-            Scoreboard_DrawTeams();
-            Scoreboard_DrawBoxes();
-            Scoreboard_DrawScores();
-        }
-        break;
-    }
-
-    Display_Update();
+    // O loop padrão do Arduino roda no Core 1 com prioridade 1.
+    // Como criamos Tasks dedicadas profissionais, não precisamos mais do loop padrão.
+    // Deletar o loop principal economiza recursos.
+    vTaskDelete(NULL);
 }
